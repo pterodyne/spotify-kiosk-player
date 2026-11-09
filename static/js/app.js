@@ -111,7 +111,6 @@ let currentPlaylistId = null;
 let currentArtistId = null;
 let currentAlbumId = null;
 let currentViewMode = 'playlists'; // 'playlists' or 'artists'
-let currentArtistSubView = 'tracks'; // 'tracks' or 'albums' (only used in artists view)
 let isShuffleOn = false;
 let currentTrackId = null;
 let devicePollingInterval = null;
@@ -151,7 +150,6 @@ const CACHE_KEYS = {
     PLAYLISTS: 'spotify-playlists-cache',
     TRACKS_PREFIX: 'spotify-tracks-',
     ARTISTS: 'spotify-artists-cache',
-    ARTIST_TRACKS_PREFIX: 'spotify-artist-tracks-',
     ARTIST_ALBUMS_PREFIX: 'spotify-artist-albums-',
     ALBUM_TRACKS_PREFIX: 'spotify-album-tracks-'
 };
@@ -193,9 +191,6 @@ function clearPlaylistCache() {
 
 function clearArtistCache() {
     localStorage.removeItem(CACHE_KEYS.ARTISTS);
-    Object.keys(localStorage)
-        .filter(k => k.startsWith(CACHE_KEYS.ARTIST_TRACKS_PREFIX))
-        .forEach(k => localStorage.removeItem(k));
     // Also clear album cache for artists
     Object.keys(localStorage)
         .filter(k => k.startsWith(CACHE_KEYS.ARTIST_ALBUMS_PREFIX) || k.startsWith(CACHE_KEYS.ALBUM_TRACKS_PREFIX))
@@ -213,8 +208,6 @@ function updateURL() {
         if (currentArtistId) params.set('artist', currentArtistId);
         if (currentAlbumId) {
             params.set('album', currentAlbumId);
-        } else if (currentArtistSubView === 'albums') {
-            params.set('subview', 'albums');
         }
     }
 
@@ -228,7 +221,6 @@ async function restoreFromURL() {
     const playlistId = params.get('playlist');
     const artistId = params.get('artist');
     const albumId = params.get('album');
-    const subview = params.get('subview');
 
     // No URL params - use defaults
     if (!view) {
@@ -254,10 +246,8 @@ async function restoreFromURL() {
             btn.classList.toggle('active', btn.getAttribute('data-view') === 'artists');
         });
 
-        const artistSubToggle = document.getElementById('artist-sub-toggle');
-        if (artistSubToggle) artistSubToggle.style.display = 'flex';
-
-        await loadArtists();
+        // Keep an explicit deep link from being replaced by first-artist selection.
+        await loadArtists(!artistId);
 
         if (artistId) {
             currentArtistId = artistId;
@@ -268,20 +258,8 @@ async function restoreFromURL() {
                 // Load album tracks
                 currentAlbumId = albumId;
                 await loadAlbumTracksById(albumId);
-            } else if (subview === 'albums') {
-                currentArtistSubView = 'albums';
-                document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-                    btn.classList.toggle('active', btn.getAttribute('data-subview') === 'albums');
-                });
-                const tracksPanelTitle = document.getElementById('tracks-panel-title');
-                if (tracksPanelTitle) {
-                    tracksPanelTitle.style.display = 'block';
-                    tracksPanelTitle.textContent = 'Albums';
-                }
-                await loadArtistAlbums(artistId);
             } else {
-                // Default: load top tracks
-                await loadArtistTracksById(artistId);
+                await loadArtistAlbums(artistId);
             }
         }
     }
@@ -334,13 +312,10 @@ async function readBrowseList(response, fallbackMessage) {
 }
 
 // Server messages are untrusted text, never HTML.
-function showBrowseError(container, error, fallbackMessage, suggestAlbums = false) {
+function showBrowseError(container, error, fallbackMessage) {
     const state = document.createElement('div');
     state.className = 'empty-state';
     state.textContent = error.message || fallbackMessage;
-    if (suggestAlbums) {
-        state.textContent += ` — Try ${t('panel.albums')} instead.`;
-    }
     container.replaceChildren(state);
 }
 
@@ -369,41 +344,6 @@ async function loadTracksById(playlistId) {
     }
 }
 
-// Helper to load artist tracks by ID (without button reference)
-async function loadArtistTracksById(artistId) {
-    currentArtistId = artistId;
-    currentPlaylistId = null;
-    currentAlbumId = null;
-    currentArtistSubView = 'tracks';
-
-    resetArtistSubToggle();
-
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = t('panel.topTracks');
-    }
-
-    const cacheKey = CACHE_KEYS.ARTIST_TRACKS_PREFIX + artistId;
-    const cached = getCache(cacheKey);
-    if (cached) {
-        renderTracks(cached);
-        return;
-    }
-
-    tracksContainer.innerHTML = `<div class="loading">${t('loading.topTracks')}</div>`;
-
-    try {
-        const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await readBrowseList(response, t('error.loadTracks'));
-        setCache(cacheKey, tracks);
-        renderTracks(tracks);
-    } catch (error) {
-        console.error('Error loading artist tracks:', error);
-        showBrowseError(tracksContainer, error, t('error.loadTracks'), true);
-    }
-}
-
 // Helper to load album tracks by ID (without album name)
 async function loadAlbumTracksById(albumId) {
     currentAlbumId = albumId;
@@ -412,11 +352,9 @@ async function loadAlbumTracksById(albumId) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) tracksPanelTitle.style.display = 'none';
 
-    // Show back button, hide sub-toggle
+    // Show the album back button
     const albumBackBtn = document.getElementById('album-back-btn');
     if (albumBackBtn) albumBackBtn.style.display = 'flex';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
     const cached = getCache(cacheKey);
@@ -712,14 +650,6 @@ function setupEventListeners() {
         });
     });
 
-    // Artist sub-toggle (Top Tracks / Albums) event listeners
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const subview = btn.getAttribute('data-subview');
-            switchArtistSubView(subview);
-        });
-    });
-
     // Album back button event listener
     if (albumBackBtn) {
         albumBackBtn.addEventListener('click', goBackToAlbums);
@@ -810,20 +740,10 @@ function switchViewMode(mode) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = mode === 'playlists' ? t('panel.tracks') : t('panel.topTracks');
+        tracksPanelTitle.textContent = mode === 'playlists' ? t('panel.tracks') : t('panel.albums');
     }
 
-    // Show/hide artist sub-toggle
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) {
-        artistSubToggle.style.display = mode === 'artists' ? 'flex' : 'none';
-    }
-
-    // Reset artist sub-view to tracks when switching modes
-    if (mode === 'playlists') {
-        currentArtistSubView = 'tracks';
-        resetArtistSubToggle();
-    }
+    if (albumBackBtn) albumBackBtn.style.display = 'none';
 
     // Animate content switch
     playlistsContainer.classList.add('switching');
@@ -849,47 +769,12 @@ function switchViewMode(mode) {
     }, 150);
 }
 
-// Reset artist sub-toggle to default state (tracks)
-function resetArtistSubToggle() {
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-subview') === 'tracks');
-    });
-}
-
-// Switch between top tracks and albums in artist view
-function switchArtistSubView(subview) {
-    if (subview === currentArtistSubView) return;
-    if (!currentArtistId) return; // No artist selected
-
-    currentArtistSubView = subview;
-    currentAlbumId = null; // Reset album selection
-
-    // Update sub-toggle buttons
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-subview') === subview);
-    });
-
-    // Update panel title
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = subview === 'tracks' ? t('panel.topTracks') : t('panel.albums');
-    }
-
-    // Load appropriate content
-    if (subview === 'tracks') {
-        loadArtistTracks(currentArtistId, document.querySelector('.artist-item.active'));
-    } else {
-        loadArtistAlbums(currentArtistId);
-    }
-}
-
 // Load artists
-async function loadArtists() {
+async function loadArtists(autoSelect = true) {
     // Check cache first
     const cached = getCache(CACHE_KEYS.ARTISTS);
     if (cached) {
-        renderArtists(cached);
+        renderArtists(cached, autoSelect);
         return;
     }
 
@@ -901,7 +786,7 @@ async function loadArtists() {
 
         // Cache the result
         setCache(CACHE_KEYS.ARTISTS, artists);
-        renderArtists(artists);
+        renderArtists(artists, autoSelect);
     } catch (error) {
         console.error('Error loading artists:', error);
         showBrowseError(playlistsContainer, error, t('error.loadArtists'));
@@ -909,7 +794,7 @@ async function loadArtists() {
 }
 
 // Render artists to DOM
-function renderArtists(artists) {
+function renderArtists(artists, autoSelect = true) {
     playlistsContainer.innerHTML = '';
 
     if (artists.length === 0) {
@@ -934,71 +819,35 @@ function renderArtists(artists) {
         nameSpan.textContent = artist.name;
         btn.appendChild(nameSpan);
 
-        btn.onclick = () => loadArtistTracks(artist.id, btn);
+        btn.onclick = () => loadArtistAlbums(artist.id, btn);
         playlistsContainer.appendChild(btn);
     });
 
     // Automatically load first artist
-    if (artists.length > 0) {
+    if (autoSelect && artists.length > 0) {
         const firstBtn = playlistsContainer.querySelector('.artist-item');
         if (firstBtn) {
-            loadArtistTracks(artists[0].id, firstBtn);
+            loadArtistAlbums(artists[0].id, firstBtn);
         }
     }
 }
 
-// Load top tracks from artist
-async function loadArtistTracks(artistId, artistBtn) {
-    // Store current artist ID (no playlist context for artist tracks)
-    currentArtistId = artistId;
-    currentPlaylistId = null; // Clear playlist context
-    currentAlbumId = null; // Clear album context
-
-    // Update active state
-    document.querySelectorAll('.artist-item').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    if (artistBtn) artistBtn.classList.add('active');
-
-    // Reset sub-toggle to tracks when selecting a new artist
-    currentArtistSubView = 'tracks';
-    resetArtistSubToggle();
-
-    // Update panel title
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = t('panel.topTracks');
-    }
-
-    const cacheKey = CACHE_KEYS.ARTIST_TRACKS_PREFIX + artistId;
-
-    // Check cache first
-    const cached = getCache(cacheKey);
-    if (cached) {
-        renderTracks(cached);
-        updateURL();
-        return;
-    }
-
-    tracksContainer.innerHTML = `<div class="loading">${t('loading.topTracks')}</div>`;
-
-    try {
-        const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await readBrowseList(response, t('error.loadTracks'));
-
-        // Cache the result
-        setCache(cacheKey, tracks);
-        renderTracks(tracks);
-        updateURL();
-    } catch (error) {
-        console.error('Error loading artist tracks:', error);
-        showBrowseError(tracksContainer, error, t('error.loadTracks'), true);
-    }
-}
-
 // Load albums from artist
-async function loadArtistAlbums(artistId) {
+async function loadArtistAlbums(artistId, artistBtn) {
+    currentArtistId = artistId;
+    currentPlaylistId = null;
+    currentAlbumId = null;
+    document.querySelectorAll('.artist-item').forEach(btn => {
+        btn.classList.toggle('active', btn === artistBtn);
+    });
+    if (!artistBtn) highlightArtistItem(artistId);
+    if (albumBackBtn) albumBackBtn.style.display = 'none';
+    const title = document.getElementById('tracks-panel-title');
+    if (title) {
+        title.style.display = 'block';
+        title.textContent = t('panel.albums');
+    }
+
     const cacheKey = CACHE_KEYS.ARTIST_ALBUMS_PREFIX + artistId;
 
     // Check cache first
@@ -1071,10 +920,8 @@ async function loadAlbumTracks(albumId, albumName) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) tracksPanelTitle.style.display = 'none';
 
-    // Show back button, hide sub-toggle
+    // Show the album back button
     if (albumBackBtn) albumBackBtn.style.display = 'flex';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
 
@@ -1106,16 +953,14 @@ async function loadAlbumTracks(albumId, albumName) {
 function goBackToAlbums() {
     currentAlbumId = null;
 
-    // Hide back button, show sub-toggle
+    // Hide the album back button
     if (albumBackBtn) albumBackBtn.style.display = 'none';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'flex';
 
     // Show and update panel title
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = 'Albums';
+        tracksPanelTitle.textContent = t('panel.albums');
     }
 
     // Load albums again
@@ -1987,6 +1832,14 @@ async function loadDevices() {
 
         const devicesList = document.getElementById('devices-list');
         devicesList.innerHTML = '';
+        const targetNotice = document.createElement('div');
+        targetNotice.className = 'empty-state';
+        targetNotice.textContent = apiData.target_error || 'Only allowed Spotify targets are listed. Click to select; click the selected target to deselect. Selection does not start playback.';
+        devicesList.appendChild(targetNotice);
+        const deselect = document.createElement('button');
+        deselect.textContent = 'Deselect playback target';
+        deselect.onclick = () => selectDevice(null);
+        devicesList.appendChild(deselect);
 
         const apiDevices = apiData.devices || [];
         const localDevices = localData.devices || [];
@@ -2005,7 +1858,7 @@ async function loadDevices() {
 
         // Check if we have any devices to show
         if (apiDevices.length === 0 && filteredLocalDevices.length === 0) {
-            devicesList.innerHTML = `<div class="empty-state">${t('empty.noDevices')}</div>`;
+            devicesList.insertAdjacentHTML('beforeend', `<div class="empty-state">${t('empty.noDevices')}</div>`);
             return;
         }
 
@@ -2039,10 +1892,10 @@ async function loadDevices() {
 function createDeviceElement(device) {
     const div = document.createElement('div');
     div.className = 'device-item';
-    if (device.is_active) div.classList.add('active');
+    if (device.is_selected) div.classList.add('active');
 
     const icon = getDeviceIcon(device.type);
-    const activeDot = device.is_active ? '<span class="active-dot"></span>' : '';
+    const activeDot = device.is_selected ? '<span class="active-dot"></span>' : '';
 
     div.innerHTML = `
         <span class="device-icon">${icon}</span>
@@ -2053,7 +1906,7 @@ function createDeviceElement(device) {
         ${activeDot}
     `;
 
-    div.onclick = () => selectDevice(device.id);
+    div.onclick = () => selectDevice(device.is_selected ? null : device.id);
     return div;
 }
 
@@ -2177,8 +2030,11 @@ async function selectDevice(deviceId) {
             body: JSON.stringify({ device_id: deviceId })
         });
 
+        const data = await response.json();
         if (response.ok) {
-            loadDevices(); // Refresh device list to show new active device
+            loadDevices(); // Refresh the persistent selection, not Spotify active state
+        } else {
+            showToast(data.error || t('error.selectDevice'), 'error');
         }
     } catch (error) {
         console.error('Error transferring playback:', error);

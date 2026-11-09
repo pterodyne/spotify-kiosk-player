@@ -6,7 +6,7 @@ import unittest
 
 APP = Path(__file__).resolve().parents[1] / 'static/js/app.js'
 LOADERS = ['loadPlaylists', 'loadArtists', 'loadTracks', 'loadTracksById',
-           'loadArtistTracks', 'loadArtistTracksById', 'loadArtistAlbums',
+           'loadArtistAlbums',
            'loadAlbumTracks', 'loadAlbumTracksById']
 
 
@@ -16,7 +16,7 @@ const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const name = process.argv[2], scenario = process.argv[3];
 const functions = [...source.matchAll(/^(?:async )?function \w+\([^\n]*\) \{[\s\S]*?^\}/gm)];
-const selected = functions.filter(m => /function (loadPlaylists|loadArtists|loadTracks|loadTracksById|loadArtistTracks|loadArtistTracksById|loadArtistAlbums|loadAlbumTracks|loadAlbumTracksById|readBrowseList|showBrowseError)\(/.test(m[0])).map(m => m[0]).join('\n');
+const selected = functions.filter(m => /function (loadPlaylists|loadArtists|loadTracks|loadTracksById|loadArtistAlbums|loadAlbumTracks|loadAlbumTracksById|readBrowseList|showBrowseError)\(/.test(m[0])).map(m => m[0]).join('\n');
 function element() {
     return {innerHTML: '', textContent: '', style: {}, children: [],
         classList: {add() {}, remove() {}, toggle() {}},
@@ -32,13 +32,13 @@ const cache = new Map();
 const ctx = {
     console: {error() {}}, tracksContainer: tracks, playlistsContainer: playlists,
     albumBackBtn: element(), currentPlaylistId: null, currentArtistId: null,
-    currentAlbumId: null, currentArtistSubView: 'tracks',
+    currentAlbumId: null,
     CACHE_KEYS: {PLAYLISTS: 'p', ARTISTS: 'a', TRACKS_PREFIX: 'pt',
-        ARTIST_TRACKS_PREFIX: 'at', ARTIST_ALBUMS_PREFIX: 'aa', ALBUM_TRACKS_PREFIX: 'al'},
+        ARTIST_ALBUMS_PREFIX: 'aa', ALBUM_TRACKS_PREFIX: 'al'},
     getCache: key => cache.get(key), setCache: (key, value) => {writes.push(value); cache.set(key, value);},
     renderTracks: value => rendered.push(value), renderAlbumTracks: value => rendered.push(value),
     renderPlaylists: value => rendered.push(value), renderArtists: value => rendered.push(value),
-    renderAlbums: value => rendered.push(value), resetArtistSubToggle() {}, updateURL() {},
+    renderAlbums: value => rendered.push(value), highlightArtistItem() {}, updateURL() {},
     t: key => key === 'panel.albums' ? 'Albums' : key,
     document: {getElementById: () => element(), querySelectorAll: () => [], createElement: element},
     fetch: async () => {requests++; return {ok: !['error', 'http-array'].includes(scenario), status: 403,
@@ -60,7 +60,6 @@ vm.createContext(ctx); vm.runInContext(selected, ctx);
         if (['error', 'object-error'].includes(scenario)) assert.ok(text.includes(message), text);
         else assert.ok(text.length > 0);
         assert.ok(!container.innerHTML.includes(message), 'server text must not be interpolated into HTML');
-        if (name.includes('ArtistTracks')) assert.match(text, /Albums/);
         await ctx[name]('id', element());
         assert.equal(requests, 2, 'failures must remain retryable');
     }
@@ -84,7 +83,7 @@ class BrowseErrorTests(unittest.TestCase):
                 with self.subTest(loader=name, scenario=scenario):
                     run_loader(name, scenario)
 
-    def test_browse_loading_and_top_tracks_labels_are_translated(self):
+    def test_browse_loading_labels_are_translated(self):
         source = APP.read_text()
         for label in ['Top Nummers', 'Top nummers laden...', 'Nummers laden...', 'Artiesten laden...']:
             self.assertNotIn(label, source)
