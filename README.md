@@ -1,4 +1,10 @@
-# Kids Spotify Player
+# Spotify Kiosk Player
+
+A fork of [RobinMM/kids-spotify-player](https://github.com/RobinMM/kids-spotify-player), with an English startup experience and optional Sway/Wayland on-screen keyboard setup. Original author attribution and existing license terms are retained; this fork does not grant a new license.
+
+For the optional wvkbd keyboard, compatibility limits, setup, and rollback, see [docs/keyboard.md](docs/keyboard.md). It requires real-device validation before relying on touchscreen-only Spotify login.
+
+Development checks: `python3 -m unittest discover -s tests -v` and `bash -n install.sh scripts/setup-keyboard.sh`.
 
 A kid-friendly Spotify player built with Flask and JavaScript. Designed for use on a Raspberry Pi with touchscreen.
 
@@ -6,7 +12,7 @@ A kid-friendly Spotify player built with Flask and JavaScript. Designed for use 
 >
 > This project is still a work in progress and not fully stable yet. The installation script is fresh and needs more real-world testing.
 >
-> Found a bug? I'd love to hear about it! Please [open an issue](https://github.com/RobinMM/kids-spotify-player/issues) with clear steps to reproduce. I'm a dad of two with a full-time job, so my time is limited — but I'll do my best to look into it when I can. Thanks for your patience and interest in this project! 🙏
+> For upstream bug reports, [open an issue with the original project](https://github.com/RobinMM/kids-spotify-player/issues). For fork-specific changes, use a pull request or discussion on this fork. This is experimental software; back up your configuration before installation.
 
 ## Features
 
@@ -40,7 +46,7 @@ A kid-friendly Spotify player built with Flask and JavaScript. Designed for use 
 SSH into your Raspberry Pi and run:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/RobinMM/kids-spotify-player/main/install.sh -o install.sh && bash install.sh
+curl -sSL https://raw.githubusercontent.com/pterodyne/spotify-kiosk-player/main/install.sh -o install.sh && bash install.sh
 ```
 
 The installer will:

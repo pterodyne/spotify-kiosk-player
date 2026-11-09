@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laden...</title>
+    <title>Loading - Spotify Kiosk Player</title>
     <style>
         * {
             margin: 0;
@@ -120,8 +120,8 @@
     <div class="container" id="loading-state">
         <div class="logo">🎵</div>
         <div class="spinner"></div>
-        <h1 class="title">Muziekspeler</h1>
-        <p class="status" id="status-text">Opstarten...</p>
+        <h1 class="title">Spotify Kiosk Player</h1>
+        <p class="status" id="status-text">Starting...</p>
         <div class="progress-container">
             <div class="progress-bar" id="progress-bar"></div>
         </div>
@@ -130,12 +130,12 @@
     <!-- Error State -->
     <div class="container error-state" id="error-state">
         <div class="error-icon">😢</div>
-        <h1 class="title">Oeps!</h1>
+        <h1 class="title">Something went wrong</h1>
         <p class="error-message">
-            De muziekspeler kon niet worden gestart.<br>
-            Probeer het opnieuw of herstart het apparaat.
+            Spotify Kiosk Player could not start.<br>
+            Try again or restart the device.
         </p>
-        <button class="retry-btn" onclick="startHealthCheck()">Opnieuw proberen</button>
+        <button class="retry-btn" onclick="startHealthCheck()">Try again</button>
     </div>
 
     <script>
@@ -183,13 +183,13 @@
 
             // Update status based on progress
             if (attempts < 10) {
-                updateStatus('Opstarten...');
+                updateStatus('Starting...');
             } else if (attempts < 40) {
-                updateStatus('Services laden...');
+                updateStatus('Loading services...');
             } else if (attempts < 80) {
-                updateStatus('Bijna klaar...');
+                updateStatus('Almost ready...');
             } else {
-                updateStatus('Even geduld...');
+                updateStatus('Please wait...');
             }
 
             try {
@@ -207,7 +207,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     if (data.status === 'ok') {
-                        updateStatus('Gereed!');
+                        updateStatus('Ready!');
                         updateProgress(100);
                         // Short delay for visual feedback
                         setTimeout(() => {
