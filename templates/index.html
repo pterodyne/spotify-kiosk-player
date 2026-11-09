@@ -13,8 +13,12 @@
 </head>
 <body>
     <div class="container">
+        <div class="library-tracks-toggle" role="group" aria-label="Browse music">
+            <button type="button" data-pane="library" aria-controls="library-panel" aria-pressed="true">Library</button>
+            <button type="button" data-pane="tracks" aria-controls="tracks-panel" aria-pressed="false">Tracks</button>
+        </div>
         <!-- Left Panel: Playlists / Artists -->
-        <div class="panel panel-left">
+        <div class="panel panel-left" id="library-panel">
             <div class="view-toggle">
                 <button class="view-toggle-btn active" data-view="playlists">
                     <svg class="toggle-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -35,7 +39,7 @@
         </div>
 
         <!-- Middle Panel: Tracks -->
-        <div class="panel panel-middle">
+        <div class="panel panel-middle" id="tracks-panel">
             <div class="panel-header">
                 <!-- Album back button (buiten panel-title-row zodat hij zichtbaar blijft) -->
                 <button class="back-btn" id="album-back-btn" style="display: none;" title="Back to albums">
@@ -733,5 +737,6 @@
 
     <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/layout.js') }}"></script>
 </body>
 </html>
