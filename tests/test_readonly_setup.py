@@ -62,6 +62,61 @@ class ReadonlySetupTests(unittest.TestCase):
             # vendor remount command and all its existing behavior are retained.
             self.assertNotIn('[Service]', files[name])
 
+    def test_resolver_symlink_plan_apply_and_nondereferencing_backups(self):
+        import importlib.util
+        import json
+        import os
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('readonly_dns', SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for original in ('regular', 'symlink', 'dangling', 'absent'):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                (root / 'etc').mkdir()
+                (root / 'etc/fstab').write_text('PARTUUID=sd /boot/firmware vfat defaults 0 2\n')
+                (root / 'boot/firmware').mkdir(parents=True)
+                (root / 'boot/firmware/cmdline.txt').write_text('quiet splash\n')
+                target = root / 'etc/resolv.conf'
+                external = root / 'untouched-resolver'
+                external.write_text('external must not change\n')
+                if original == 'regular':
+                    target.write_text('# original\n')
+                    target.chmod(0o640)
+                elif original in ('symlink', 'dangling'):
+                    target.symlink_to(external if original == 'symlink' else root / 'missing')
+                old_link = os.readlink(target) if target.is_symlink() else None
+                dry = subprocess.run(['python3', str(SCRIPT), '--root', tmp], capture_output=True, text=True)
+                self.assertEqual(dry.returncode, 0, dry.stderr)
+                self.assertIn('SYMLINK /etc/resolv.conf -> /run/NetworkManager/resolv.conf', dry.stdout)
+                self.assertEqual(module.symlink_plan(), {'etc/resolv.conf': '/run/NetworkManager/resolv.conf'})
+                self.assertNotIn('etc/resolv.conf', module.plan(root, UUID))
+                self.assertEqual(target.is_symlink(), old_link is not None)
+                real_path = pathlib.Path
+                def redirected_path(value):
+                    return root / 'backups' if value == '/root/kiosk-readonly-backups' else real_path(value)
+                with patch.object(module, 'preflight'), patch.object(module, 'Path', side_effect=redirected_path), patch('sys.argv', [str(SCRIPT), '--root', tmp, '--apply']):
+                    module.main()
+                self.assertTrue(target.is_symlink())
+                self.assertEqual(os.readlink(target), '/run/NetworkManager/resolv.conf')
+                self.assertEqual(external.read_text(), 'external must not change\n')
+                backup = next((root / 'backups').iterdir())
+                entries = json.loads((backup / 'manifest.json').read_text())
+                entry = next(e for e in entries if e['path'] == 'etc/resolv.conf')
+                self.assertEqual(entry['existed'], original != 'absent')
+                self.assertEqual(entry['type'], 'symlink' if old_link else ('file' if original == 'regular' else 'absent'))
+                saved = backup / 'etc/resolv.conf'
+                if old_link:
+                    self.assertEqual(entry['target'], old_link)
+                    self.assertTrue(saved.is_symlink())
+                    self.assertEqual(os.readlink(saved), old_link)
+                elif original == 'regular':
+                    self.assertEqual(saved.read_text(), '# original\n')
+                    self.assertEqual(saved.stat().st_mode & 0o777, 0o640)
+                else:
+                    self.assertFalse(saved.exists())
+
     def test_rejects_old_exfat_uuid(self):
         result = subprocess.run(['python3', str(SCRIPT), '--uuid', '6AEE-24D4'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)

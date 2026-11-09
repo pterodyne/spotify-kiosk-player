@@ -56,6 +56,11 @@ def plan(root, uuid):
     return result
 
 
+def symlink_plan():
+    """Keep runtime DNS on /run, independent of overlay /etc writes."""
+    return {'etc/resolv.conf': '/run/NetworkManager/resolv.conf'}
+
+
 def check_private_usb(usb, uuid):
     """Reject user-writable attestation storage and link/nonregular markers."""
     for parent in usb.parents:
@@ -106,22 +111,31 @@ def main():
         parser.error('Expected ext4 UUID, not the old exFAT identifier')
     try:
         files = plan(args.root, args.uuid)
+        links = symlink_plan()
         if not args.apply:
             for path, text in files.items():
                 print(f'--- /{path}\n{text}', end='')
+            for path, destination in links.items():
+                print(f'SYMLINK /{path} -> {destination}')
             return
         preflight(args.root, args.uuid)
         backup = Path('/root/kiosk-readonly-backups') / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
         backup.mkdir(parents=True, mode=0o700)
         os.chmod(backup.parent, 0o700)
         manifest = []
-        for name in files:
+        for name in (*files, *links):
             target = args.root / name
-            manifest.append({'path': name, 'existed': target.exists()})
-            if target.exists():
+            existed = target.exists() or target.is_symlink()
+            entry = {'path': name, 'existed': existed}
+            if name in links:
+                entry['type'] = 'symlink' if target.is_symlink() else ('file' if existed else 'absent')
+                if target.is_symlink():
+                    entry['target'] = os.readlink(target)
+            manifest.append(entry)
+            if existed:
                 dest = backup / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(target, dest)
+                shutil.copy2(target, dest, follow_symlinks=False)
         # Boot archives are copied before the first config write. Root-only:
         # firmware config and Plymouth selection can be needed for recovery.
         for name in ('boot', 'etc/plymouth', 'etc/alternatives/default.plymouth', 'etc/overlayroot.conf', 'etc/overlayroot.local.conf'):
@@ -138,6 +152,12 @@ def main():
             target = args.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text)
+        for name, destination in links.items():
+            target = args.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Never follow a preexisting link or write into its runtime target.
+            target.unlink(missing_ok=True)
+            target.symlink_to(destination)
         print(f'Staged only; no mounts/rebuild/reboot performed. Backup: {backup}')
     except (ValueError, OSError, subprocess.SubprocessError, KeyError, IndexError) as exc:
         parser.exit(1, f'ERROR: {exc}\n')

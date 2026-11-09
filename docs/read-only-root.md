@@ -248,6 +248,88 @@ and its new journal entries. A live condition test is not a new boot test.
 References: [systemd-remount-fs.service](https://www.freedesktop.org/software/systemd/man/latest/systemd-remount-fs.service.html)
 and [systemd.unit conditions](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Conditions%20and%20Asserts).
 
+## Overlayroot DNS publication
+
+After this boot, the active NetworkManager profile still supplied its configured
+DNS servers and `/run/NetworkManager/resolv.conf` contained them, but the regular
+`/etc/resolv.conf` contained only the NetworkManager header. NetworkManager logged
+failure writing an `/etc` temporary file with `No space left on device`.
+A DNS-only `sudo nmcli general reload dns-rc` restored runtime resolution; this
+was recovery, not a persistent repair. The later nearly empty 1.9 GiB upper tmpfs
+and low inode usage do **not** explain the early ENOSPC: its cause remains unknown.
+Cloud-init's same-boot journal also records ENOSPC for `/var/log/cloud-init-output.log`
+and status-file writes during init-local/init-network, plus a missing
+`cc_netplan_nm_patch` warning. This suggests a broader early write failure, not
+proof cloud-init caused DNS loss. Do not disable cloud-init or change profiles.
+
+The installer now stages **a symlink operation, not file contents**:
+`/etc/resolv.conf -> /run/NetworkManager/resolv.conf`. NetworkManager's runtime
+file is on writable `/run`, so resolver contents no longer require regular-file
+publication into overlay `/etc`. No hard-coded DNS override or profile permission
+change is needed. The inspected installed NetworkManager 1.52.1 manual says it
+always writes its runtime resolver regardless of `rc-manager`; `auto` falls back
+to `symlink`, which preserves this link (it may refresh it for inotify). The
+inspected configuration uses default `rc-manager=auto`. Reassess if introducing
+resolvconf, netconfig, systemd-resolved or a different DNS manager.
+
+Backups preserve existing symlinks without dereferencing, even dangling links.
+The resolver manifest records `existed`, `type` (`file`, `symlink`, `absent`) and
+an original link `target` where applicable. Rollback must unlink the installed
+resolver link first, then copy the backed-up object with `cp -a --no-dereference`;
+if originally absent, leave it absent. Never restore with a write through the
+installed link, which would overwrite the runtime resolver instead.
+
+For an already-overlaid host, **operator-only** commands below apply just DNS,
+not the full installer (which intentionally refuses overlay apply). Review and
+separately authorize both live and persistent changes. Run the first block on
+the Pi; it backs up the live object root-only and does not restart networking:
+
+```sh
+sudo /bin/sh -eu -c '
+  test -s /run/NetworkManager/resolv.conf
+  b=/root/kiosk-dns-live-$(date -u +%Y%m%dT%H%M%S)-$$
+  install -d -o root -g root -m 0700 "$b"
+  cp -a --no-dereference /etc/resolv.conf "$b/resolv.conf"
+  test ! -d /etc/resolv.conf
+  ln -s /run/NetworkManager/resolv.conf /etc/.kiosk-resolv.conf.new
+  mv -Tf /etc/.kiosk-resolv.conf.new /etc/resolv.conf
+'
+readlink /etc/resolv.conf
+cat /etc/resolv.conf
+getent ahosts api.spotify.com
+```
+
+Only after live validation, persist the same link to the lower SD root. The
+runtime target may not exist inside the helper's chroot; do not require it there.
+This command preserves the lower original object, including a dangling link:
+
+```sh
+sudo overlayroot-chroot /bin/sh -eu -c '
+  b=/root/kiosk-dns-lower-$(date -u +%Y%m%dT%H%M%S)-$$
+  install -d -o root -g root -m 0700 "$b"
+  if test -e /etc/resolv.conf || test -L /etc/resolv.conf; then
+    cp -a --no-dereference /etc/resolv.conf "$b/resolv.conf"
+  else
+    touch "$b/resolv.conf.was-absent"
+  fi
+  test ! -d /etc/resolv.conf
+  ln -s /run/NetworkManager/resolv.conf /etc/.kiosk-resolv.conf.new
+  mv -Tf /etc/.kiosk-resolv.conf.new /etc/resolv.conf
+'
+findmnt --mountpoint /media/root-ro -o TARGET,SOURCE,FSTYPE,OPTIONS
+readlink /media/root-ro/etc/resolv.conf
+readlink /etc/resolv.conf
+cat /run/NetworkManager/resolv.conf
+getent ahosts api.spotify.com
+```
+
+Require both readlinks to match `/run/NetworkManager/resolv.conf`, and the lower
+mount to be back to `ro`; stop and investigate otherwise. No NetworkManager
+restart, connection reload, DNS-server edit, daemon-reload, initramfs rebuild or
+reboot is required for this link-only repair. Check app/Spotify API health too.
+At the next separately authorized boot, verify both link and DNS resolution
+again; offline tests and a live repair do not prove a fresh boot succeeded.
+
 ## Keep high-volume caches in RAM
 
 The inspected installed `librespot --help` supports `--disable-audio-cache` and
