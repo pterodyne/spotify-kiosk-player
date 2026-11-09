@@ -1,0 +1,48 @@
+# No browser or network dependency. Branding text is rasterized in logo.png.
+Window.SetBackgroundTopColor(0.035, 0.043, 0.039);
+Window.SetBackgroundBottomColor(0.035, 0.043, 0.039);
+logo = Image("logo.png");
+scale = Math.Min(1, Math.Min(Window.GetWidth() / 480, Window.GetHeight() / 480));
+logo = logo.Scale(logo.GetWidth() * scale, logo.GetHeight() * scale);
+brand = Sprite(logo);
+brand.SetPosition(Window.GetX() + (Window.GetWidth() - logo.GetWidth()) / 2, Window.GetY() + Window.GetHeight() * 0.17, 0);
+bar = Sprite(Image("bar.png"));
+bar.SetPosition(Window.GetX() + Window.GetWidth() / 2 - 60, brand.GetY() + logo.GetHeight() + 24, 1);
+message = Sprite();
+prompt_label = Sprite();
+entry_label = Sprite();
+phase = 0;
+fun refresh() {
+    global.phase += 0.075;
+    bar.SetOpacity(0.55 + 0.45 * Math.Sin(global.phase));
+}
+Plymouth.SetRefreshFunction(refresh);
+fun label(sprite, text, y) {
+    local.image = Image.Text(text, 0.96, 0.97, 0.96);
+    if (image.GetWidth() > Window.GetWidth() - 24)
+        image = image.Scale(Window.GetWidth() - 24, image.GetHeight() * (Window.GetWidth() - 24) / image.GetWidth());
+    sprite.SetImage(image);
+    sprite.SetPosition(Window.GetX() + (Window.GetWidth() - image.GetWidth()) / 2, Window.GetY() + Window.GetHeight() * y, 10);
+    sprite.SetOpacity(1);
+}
+fun show_message(text) { label(message, text, 0.91); }
+fun hide_message(text) { message.SetOpacity(0); }
+fun password(prompt, bullets) {
+    label(prompt_label, prompt, 0.77);
+    local.mask = "";
+    for (local.i = 0; i < Math.Min(bullets, 48); i++) mask += "*";
+    label(entry_label, mask, 0.84);
+}
+fun question(prompt, entry_contents) {
+    label(prompt_label, prompt, 0.77);
+    label(entry_label, entry_contents, 0.84);
+}
+fun normal() {
+    prompt_label.SetOpacity(0);
+    entry_label.SetOpacity(0);
+}
+Plymouth.SetMessageFunction(show_message);
+Plymouth.SetHideMessageFunction(hide_message);
+Plymouth.SetDisplayPasswordFunction(password);
+Plymouth.SetDisplayQuestionFunction(question);
+Plymouth.SetDisplayNormalFunction(normal);

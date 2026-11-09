@@ -840,7 +840,7 @@ default_border none
 default_floating_border none
 
 # Start Chromium borderless; allow the compositor to reserve keyboard space
-exec ${CHROMIUM_CMD} --app=file://${INSTALL_DIR}/static/loader.html --ozone-platform=wayland --noerrdialogs --disable-infobars
+exec ${INSTALL_DIR}/scripts/launch-player.sh --ozone-platform=wayland --noerrdialogs --disable-infobars
 
 # Disable swaybar
 bar {
@@ -872,7 +872,7 @@ EOF
 Type=Application
 Name=Spotify Kiosk Player
 Comment=Touchscreen Spotify player for kids
-Exec=${CHROMIUM_CMD} --app=file://${INSTALL_DIR}/static/loader.html --noerrdialogs --disable-infobars --touch-events=enabled --enable-features=TouchpadOverscrollHistoryNavigation --disable-pinch --overscroll-history-navigation=0
+Exec=${INSTALL_DIR}/scripts/launch-player.sh --noerrdialogs --disable-infobars --touch-events=enabled --enable-features=TouchpadOverscrollHistoryNavigation --disable-pinch --overscroll-history-navigation=0
 X-GNOME-Autostart-enabled=true
 EOF
         print_success "Autostart entry created"

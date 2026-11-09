@@ -13,7 +13,10 @@ class ForkInstallerTests(unittest.TestCase):
     def test_kiosk_launches_borderless_app_without_covering_keyboard(self):
         text = (ROOT / 'install.sh').read_text()
         self.assertNotIn('--kiosk', text)
-        self.assertIn('--app=file://${INSTALL_DIR}/static/loader.html', text)
+        self.assertEqual(text.count('${INSTALL_DIR}/scripts/launch-player.sh'), 2)
+        launcher = (ROOT / 'scripts/launch-player.sh').read_text()
+        self.assertIn('--app=http://127.0.0.1:5000/', launcher)
+        self.assertNotIn('--app=file://', text)
 
     def test_installer_targets_fork(self):
         text = (ROOT / 'install.sh').read_text()
