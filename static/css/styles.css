@@ -961,7 +961,9 @@ svg.icon {
 .settings-button-container {
     margin-top: auto;
     padding-top: 8px;
-    text-align: center;
+    display: flex;
+    justify-content: flex-end;
+    flex-shrink: 0;
 }
 
 .btn-open-settings {
@@ -974,12 +976,21 @@ svg.icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 0 auto;
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 8px;
+}
+
+.btn-open-settings:focus-visible {
+    outline: 3px solid var(--primary-color);
+    outline-offset: -3px;
 }
 
 .btn-open-settings svg.icon {
-    width: 44px;
-    height: 44px;
+    width: 28px;
+    height: 28px;
 }
 
 .btn-open-settings:hover {

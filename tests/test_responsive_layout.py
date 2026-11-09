@@ -82,6 +82,34 @@ def test_compact_viewport_has_no_overflow_and_controls_fit(page, height):
 
 
 @pytest.mark.parametrize('height', [720, 470])
+def test_settings_gear_is_compact_lower_right_without_covering_controls(page, height):
+    page.set_viewport_size({'width': 720, 'height': height})
+    button = page.get_by_role('button', name='Settings', exact=True)
+    assert button.is_visible()
+    assert button.get_attribute('id') == 'btn-open-settings'
+    assert button.get_attribute('title') == 'Settings'
+    assert button.get_attribute('data-i18n') == 'control.settings'
+    assert button.get_attribute('data-i18n-attr') == 'title'
+    box = button.bounding_box()
+    pane = page.locator('.panel-right').bounding_box()
+    assert 44 <= box['width'] <= 48 and 44 <= box['height'] <= 48
+    assert 0 <= pane['x'] + pane['width'] - box['x'] - box['width'] <= 16
+    assert 0 <= pane['y'] + pane['height'] - box['y'] - box['height'] <= 16
+    for selector in ['#btn-previous', '#btn-play-pause', '#btn-next', '#btn-shuffle', '#volume-slider', '#progress-bar']:
+        control = page.locator(selector)
+        other = control.bounding_box()
+        assert (other['x'] + other['width'] <= box['x'] or box['x'] + box['width'] <= other['x']
+                or other['y'] + other['height'] <= box['y'] or box['y'] + box['height'] <= other['y']), selector
+        assert control.evaluate('el => { const r = el.getBoundingClientRect(); return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }'), selector
+    assert button.locator('svg path').count() == 1
+    assert button.locator('svg circle').count() == 0
+    assert button.locator('svg').get_attribute('aria-hidden') == 'true'
+    button.click(trial=True)
+    button.focus()
+    assert button.evaluate('el => el === document.activeElement')
+
+
+@pytest.mark.parametrize('height', [720, 470])
 def test_settings_fits_viewport_with_scrollable_long_content(page, height):
     page.set_viewport_size({'width': 720, 'height': height})
     page.evaluate('''() => {

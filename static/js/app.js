@@ -163,7 +163,7 @@ function getCache(key) {
         const cached = localStorage.getItem(key);
         if (!cached) return null;
         const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp > PLAYLIST_CACHE_TTL) {
+        if (!Array.isArray(data) || Date.now() - timestamp > PLAYLIST_CACHE_TTL) {
             localStorage.removeItem(key);
             return null;
         }
@@ -317,6 +317,33 @@ function highlightArtistItem(artistId) {
     });
 }
 
+// Read browsing responses before they can reach the cache or list renderers.
+async function readBrowseList(response, fallbackMessage) {
+    let data;
+    try {
+        data = await response.json();
+    } catch (error) {
+        throw new Error(fallbackMessage);
+    }
+    if (!response.ok || !Array.isArray(data)) {
+        const message = typeof data?.error === 'string' && data.error.trim()
+            ? data.error : fallbackMessage;
+        throw new Error(message);
+    }
+    return data;
+}
+
+// Server messages are untrusted text, never HTML.
+function showBrowseError(container, error, fallbackMessage, suggestAlbums = false) {
+    const state = document.createElement('div');
+    state.className = 'empty-state';
+    state.textContent = error.message || fallbackMessage;
+    if (suggestAlbums) {
+        state.textContent += ` — Try ${t('panel.albums')} instead.`;
+    }
+    container.replaceChildren(state);
+}
+
 // Helper to load tracks by ID (without button reference)
 async function loadTracksById(playlistId) {
     currentPlaylistId = playlistId;
@@ -333,12 +360,12 @@ async function loadTracksById(playlistId) {
 
     try {
         const response = await fetch(`/api/playlist/${playlistId}`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
         setCache(cacheKey, tracks);
         renderTracks(tracks);
     } catch (error) {
         console.error('Error loading tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -368,12 +395,12 @@ async function loadArtistTracksById(artistId) {
 
     try {
         const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
         setCache(cacheKey, tracks);
         renderTracks(tracks);
     } catch (error) {
         console.error('Error loading artist tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'), true);
     }
 }
 
@@ -403,12 +430,12 @@ async function loadAlbumTracksById(albumId) {
 
     try {
         const response = await fetch(`/api/album/${albumId}/tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
         setCache(cacheKey, tracks);
         renderAlbumTracks(tracks);
     } catch (error) {
         console.error('Error loading album tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -685,7 +712,7 @@ function setupEventListeners() {
         });
     });
 
-    // Artist sub-toggle (Top Nummers / Albums) event listeners
+    // Artist sub-toggle (Top Tracks / Albums) event listeners
     document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const subview = btn.getAttribute('data-subview');
@@ -718,14 +745,14 @@ async function loadPlaylists() {
 
     try {
         const response = await fetch('/api/playlists');
-        const playlists = await response.json();
+        const playlists = await readBrowseList(response, t('error.loadPlaylists'));
 
         // Cache the result
         setCache(CACHE_KEYS.PLAYLISTS, playlists);
         renderPlaylists(playlists);
     } catch (error) {
         console.error('Error loading playlists:', error);
-        playlistsContainer.innerHTML = `<div class="empty-state">${t('error.loadPlaylists')}</div>`;
+        showBrowseError(playlistsContainer, error, t('error.loadPlaylists'));
     }
 }
 
@@ -783,7 +810,7 @@ function switchViewMode(mode) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = mode === 'playlists' ? 'Nummers' : 'Top Nummers';
+        tracksPanelTitle.textContent = mode === 'playlists' ? t('panel.tracks') : t('panel.topTracks');
     }
 
     // Show/hide artist sub-toggle
@@ -846,7 +873,7 @@ function switchArtistSubView(subview) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = subview === 'tracks' ? 'Top Nummers' : 'Albums';
+        tracksPanelTitle.textContent = subview === 'tracks' ? t('panel.topTracks') : t('panel.albums');
     }
 
     // Load appropriate content
@@ -866,18 +893,18 @@ async function loadArtists() {
         return;
     }
 
-    playlistsContainer.innerHTML = '<div class="loading">Artiesten laden...</div>';
+    playlistsContainer.innerHTML = `<div class="loading">${t('loading.artists')}</div>`;
 
     try {
         const response = await fetch('/api/artists');
-        const artists = await response.json();
+        const artists = await readBrowseList(response, t('error.loadArtists'));
 
         // Cache the result
         setCache(CACHE_KEYS.ARTISTS, artists);
         renderArtists(artists);
     } catch (error) {
         console.error('Error loading artists:', error);
-        playlistsContainer.innerHTML = `<div class="empty-state">${t('error.loadArtists')}</div>`;
+        showBrowseError(playlistsContainer, error, t('error.loadArtists'));
     }
 }
 
@@ -941,7 +968,7 @@ async function loadArtistTracks(artistId, artistBtn) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = 'Top Nummers';
+        tracksPanelTitle.textContent = t('panel.topTracks');
     }
 
     const cacheKey = CACHE_KEYS.ARTIST_TRACKS_PREFIX + artistId;
@@ -954,11 +981,11 @@ async function loadArtistTracks(artistId, artistBtn) {
         return;
     }
 
-    tracksContainer.innerHTML = '<div class="loading">Top nummers laden...</div>';
+    tracksContainer.innerHTML = `<div class="loading">${t('loading.topTracks')}</div>`;
 
     try {
         const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
 
         // Cache the result
         setCache(cacheKey, tracks);
@@ -966,7 +993,7 @@ async function loadArtistTracks(artistId, artistBtn) {
         updateURL();
     } catch (error) {
         console.error('Error loading artist tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'), true);
     }
 }
 
@@ -986,7 +1013,7 @@ async function loadArtistAlbums(artistId) {
 
     try {
         const response = await fetch(`/api/artist/${artistId}/albums`);
-        const albums = await response.json();
+        const albums = await readBrowseList(response, t('error.loadAlbums'));
 
         // Cache the result
         setCache(cacheKey, albums);
@@ -994,7 +1021,7 @@ async function loadArtistAlbums(artistId) {
         updateURL();
     } catch (error) {
         console.error('Error loading artist albums:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadAlbums')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadAlbums'));
     }
 }
 
@@ -1059,11 +1086,11 @@ async function loadAlbumTracks(albumId, albumName) {
         return;
     }
 
-    tracksContainer.innerHTML = '<div class="loading">Nummers laden...</div>';
+    tracksContainer.innerHTML = `<div class="loading">${t('loading.tracks')}</div>`;
 
     try {
         const response = await fetch(`/api/album/${albumId}/tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
 
         // Cache the result
         setCache(cacheKey, tracks);
@@ -1071,7 +1098,7 @@ async function loadAlbumTracks(albumId, albumName) {
         updateURL();
     } catch (error) {
         console.error('Error loading album tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -1239,11 +1266,11 @@ async function loadTracks(playlistId, playlistBtn) {
         return;
     }
 
-    tracksContainer.innerHTML = '<div class="loading">Nummers laden...</div>';
+    tracksContainer.innerHTML = `<div class="loading">${t('loading.tracks')}</div>`;
 
     try {
         const response = await fetch(`/api/playlist/${playlistId}`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
 
         // Cache the result
         setCache(cacheKey, tracks);
@@ -1251,7 +1278,7 @@ async function loadTracks(playlistId, playlistBtn) {
         updateURL();
     } catch (error) {
         console.error('Error loading tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 

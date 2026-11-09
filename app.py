@@ -1272,6 +1272,20 @@ def health_check():
 
 
 # API Endpoints
+def _spotify_pages(sp, page):
+    """Consume Spotify paging objects without silently truncating collections."""
+    items = list(page.get('items') or [])
+    seen = set()
+    while page.get('next'):
+        next_url = page['next']
+        if next_url in seen:
+            raise ValueError('Spotify returned a repeated pagination link')
+        seen.add(next_url)
+        page = sp.next(page)
+        items.extend(page.get('items') or [])
+    return items
+
+
 @app.route('/api/playlists')
 def get_playlists():
     """Get user's playlists"""
@@ -1281,41 +1295,23 @@ def get_playlists():
 
     try:
         # Fetch ALL playlists with pagination
-        all_playlists = []
+        # Verified live: /me/playlists still accepts 50 (artist albums do not).
         results = sp.current_user_playlists(limit=50)
-        all_playlists.extend(results['items'])
-
-        # Keep fetching next pages until there are no more
-        while results['next']:
-            results = sp.next(results)
-            all_playlists.extend(results['items'])
+        all_playlists = _spotify_pages(sp, results)
 
         # Map to response format
         items = [
             {
                 'id': p['id'],
                 'name': p['name'],
-                'image': p['images'][0]['url'] if p['images'] else None,
-                'tracks_total': p['tracks']['total']
+                'image': p['images'][0]['url'] if p.get('images') else None,
+                'tracks_total': (p.get('items') or p.get('tracks') or {}).get('total', 0)
             }
             for p in all_playlists
         ]
 
-        # Debug logging (with error handling)
-        try:
-            print(f"\n=== PLAYLISTS DEBUG ===")
-            print(f"Total playlists fetched: {len(items)}")
-            print(f"Spotify API reported total: {results.get('total', 'unknown')}")
-            print(f"Has more pages: {results.get('next') is not None}")
-            print(f"\nPlaylist names:")
-            for i, item in enumerate(items, 1):
-                try:
-                    print(f"  {i}. {item['name']}")
-                except Exception as e:
-                    print(f"  {i}. [Error printing name: {e}]")
-            print(f"======================\n")
-        except Exception as e:
-            print(f"Debug logging error: {e}")
+        # Log counts only, never personal library content.
+        print(f"Fetched {len(items)} playlists")
 
         return jsonify(items)
     except Exception as e:
@@ -1371,7 +1367,8 @@ def get_artist_top_tracks(artist_id):
 
     try:
         # Get top tracks (Spotify returns max 10)
-        results = sp.artist_top_tracks(artist_id, country='NL')
+        # No market override: the authenticated account determines availability.
+        results = sp._get(f'artists/{artist_id}/top-tracks')
 
         tracks = [
             {
@@ -1386,6 +1383,15 @@ def get_artist_top_tracks(artist_id):
             for track in results['tracks']
         ]
         return jsonify(tracks)
+    except spotipy.exceptions.SpotifyException as e:
+        if e.http_status == 403:
+            return jsonify({
+                'error': 'Artist top tracks are unavailable for this Spotify app. Browse albums instead.',
+                'error_type': 'unsupported_feature',
+                'feature': 'artist_top_tracks',
+                'supported': False
+            }), 403
+        return jsonify({'error': 'Spotify request failed', 'error_type': 'spotify_error'}), e.http_status
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1398,7 +1404,8 @@ def get_artist_albums(artist_id):
 
     try:
         # Get only full albums (no singles/EPs)
-        results = sp.artist_albums(artist_id, album_type='album', country='NL', limit=50)
+        results = sp.artist_albums(artist_id, album_type='album', limit=10)
+        all_albums = _spotify_pages(sp, results)
 
         albums = [
             {
@@ -1409,7 +1416,7 @@ def get_artist_albums(artist_id):
                 'release_date': album['release_date'],
                 'total_tracks': album['total_tracks']
             }
-            for album in results['items']
+            for album in all_albums
         ]
 
         print(f"Fetched {len(albums)} albums for artist {artist_id}")
@@ -1431,7 +1438,8 @@ def get_album_tracks(album_id):
         album_uri = album_info['uri']
 
         # Get album tracks
-        results = sp.album_tracks(album_id)
+        results = sp.album_tracks(album_id, limit=10)
+        all_tracks = _spotify_pages(sp, results)
 
         tracks = [
             {
@@ -1446,7 +1454,7 @@ def get_album_tracks(album_id):
                 'track_number': track['track_number'],
                 'release_date': album_info.get('release_date', '')
             }
-            for track in results['items']
+            for track in all_tracks
         ]
 
         return jsonify(tracks)
@@ -1461,21 +1469,33 @@ def get_playlist_tracks(playlist_id):
         return jsonify({'error': 'Not authenticated'}), 401
 
     try:
-        results = sp.playlist_items(playlist_id)
+        # Older Spotipy versions still route playlist_items() to /tracks.
+        results = sp._get(f'playlists/{playlist_id}/items', limit=10)
+        entries = _spotify_pages(sp, results)
+        playlist_tracks = [entry.get('item', entry.get('track')) for entry in entries]
+        playlist_tracks = [track for track in playlist_tracks
+                           if track and track.get('type', 'track') == 'track'
+                           and track.get('id') and not track.get('is_local')]
         tracks = [
             {
-                'id': item['track']['id'],
-                'uri': item['track']['uri'],
-                'name': item['track']['name'],
-                'artist': ', '.join([artist['name'] for artist in item['track']['artists']]),
-                'album': item['track']['album']['name'],
-                'duration_ms': item['track']['duration_ms'],
-                'image': item['track']['album']['images'][0]['url'] if item['track']['album']['images'] else None
+                'id': track['id'],
+                'uri': track['uri'],
+                'name': track['name'],
+                'artist': ', '.join([artist['name'] for artist in track['artists']]),
+                'album': track['album']['name'],
+                'duration_ms': track['duration_ms'],
+                'image': track['album']['images'][0]['url'] if track['album']['images'] else None
             }
-            for item in results['items']
-            if item['track']  # Skip None tracks
+            for track in playlist_tracks
         ]
         return jsonify(tracks)
+    except spotipy.exceptions.SpotifyException as e:
+        if e.http_status == 403:
+            return jsonify({
+                'error': 'Spotify only allows playlist items for playlists you own or collaborate on.',
+                'error_type': 'playlist_access_restricted'
+            }), 403
+        return jsonify({'error': 'Spotify request failed', 'error_type': 'spotify_error'}), e.http_status
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
