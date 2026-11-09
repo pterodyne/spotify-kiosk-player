@@ -10,6 +10,7 @@ def run_launcher(tmp_path, responses):
     log = tmp_path / 'browser'
     for name, body in {
         'curl': 'n=$(cat "$COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$COUNT"\ncase "$n" in\n' + ''.join(f'{i}) {response};;\n' for i, response in enumerate(responses, 1)) + '*) exit 7;; esac\n',
+        'chromium-browser': 'cat "$COUNT" > "$LOG"; printf "%s\\n" "$@" >> "$LOG"\n',
         'chromium': 'cat "$COUNT" > "$LOG"; printf "%s\\n" "$@" >> "$LOG"\n',
         'sleep': 'exit 0\n',
     }.items():
