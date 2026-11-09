@@ -17,6 +17,22 @@
             <button type="button" data-pane="library" aria-controls="library-panel" aria-pressed="true">Library</button>
             <button type="button" data-pane="tracks" aria-controls="tracks-panel" aria-pressed="false">Tracks</button>
         </div>
+        <button type="button" id="open-search" aria-controls="search-panel" aria-expanded="false">Search</button>
+        <section class="panel" id="search-panel" aria-label="Search Spotify" hidden>
+            <form id="search-form" role="search">
+                <label for="search-query">Search all Spotify</label>
+                <input id="search-query" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" placeholder="Song, artist or album" aria-label="Search Spotify">
+                <div class="search-actions">
+                    <select id="search-type" aria-label="Result type">
+                        <option value="track">Songs</option><option value="artist">Artists</option><option value="album">Albums</option>
+                    </select>
+                    <button type="submit">Find</button>
+                </div>
+            </form>
+            <div class="search-actions"><button type="button" id="hide-search-keyboard">Hide keyboard</button><button type="button" id="close-search">Close Search</button></div>
+            <p id="search-status" role="status" aria-live="polite">Search the Spotify catalog, not just your library.</p>
+            <div class="scrollable"><div id="search-results"></div><button type="button" id="search-more" hidden>Load More</button></div>
+        </section>
         <!-- Left Panel: Playlists / Artists -->
         <div class="panel panel-left" id="library-panel">
             <div class="view-toggle">

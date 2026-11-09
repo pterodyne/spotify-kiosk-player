@@ -102,6 +102,107 @@ if (document.readyState === 'loading') {
 }
 
 // ============================================
+// Global search is separate from browsing state and cache.
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.querySelector('.container');
+    const panel = document.getElementById('search-panel');
+    const open = document.getElementById('open-search');
+    const input = document.getElementById('search-query');
+    const type = document.getElementById('search-type');
+    const results = document.getElementById('search-results');
+    const status = document.getElementById('search-status');
+    const more = document.getElementById('search-more');
+    let generation = 0;
+    let nextOffset = null;
+    let timer;
+    async function keyboard(action) {
+        try {
+            const response = await fetch('/api/keyboard', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action})
+            });
+            const data = await response.json();
+            if ((!response.ok || data?.supported !== true) && action === 'show') status.textContent = 'On-screen keyboard unavailable. You can use a physical keyboard.';
+        } catch (_) {
+            if (action === 'show') status.textContent = 'On-screen keyboard unavailable. You can use a physical keyboard.';
+        }
+    }
+    function closeSearch() {
+        ++generation;
+        clearTimeout(timer);
+        panel.hidden = true;
+        container.classList.remove('search-open');
+        open.setAttribute('aria-expanded', 'false');
+        keyboard('hide');
+    }
+    open.addEventListener('click', () => {
+        panel.hidden = false;
+        container.classList.add('search-open');
+        open.setAttribute('aria-expanded', 'true');
+        input.focus();
+    });
+    document.getElementById('close-search').addEventListener('click', () => { closeSearch(); open.focus(); });
+    document.querySelector('.library-tracks-toggle').addEventListener('click', closeSearch);
+    input.addEventListener('focus', () => keyboard('show'));
+    document.getElementById('hide-search-keyboard').addEventListener('click', () => keyboard('hide'));
+    async function search(offset = 0) {
+        const query = input.value.trim();
+        const kind = type.value;
+        const request = ++generation;
+        if (!offset) results.replaceChildren();
+        more.hidden = true;
+        if (!query) { status.textContent = 'Enter a song, artist or album.'; return; }
+        status.textContent = 'Searching Spotify…';
+        try {
+            const params = new URLSearchParams({q: query, type: kind, offset: String(offset)});
+            const response = await fetch('/api/search?' + params);
+            const data = await response.json();
+            if (request !== generation) return;
+            if (!response.ok || !Array.isArray(data.items)) throw new Error('Search unavailable');
+            for (const item of data.items) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'search-result';
+                button.textContent = item.name + (item.artist ? ' · ' + item.artist : '');
+                button.addEventListener('click', () => {
+                    if (kind === 'track') { keyboard('hide'); playTrack(item.uri, true); return; }
+                    closeSearch();
+                    currentViewMode = 'artists';
+                    currentPlaylistId = null;
+                    currentArtistId = null;
+                    currentAlbumId = null;
+                    document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'artists'));
+                    document.querySelector('[data-pane="tracks"]').click();
+                    if (kind === 'artist') loadArtistAlbums(item.id);
+                    else loadAlbumTracks(item.id, item.name);
+                });
+                results.appendChild(button);
+            }
+            nextOffset = Number.isInteger(data.next_offset) && data.next_offset > offset ? data.next_offset : null;
+            more.hidden = nextOffset === null;
+            more.disabled = false;
+            status.textContent = results.children.length ? 'Spotify results' : 'No results found.';
+        } catch (_) {
+            if (request !== generation) return;
+            status.textContent = 'Unable to search Spotify. Please try again.';
+            more.hidden = !offset;
+            more.disabled = false;
+        }
+    }
+    function changed() {
+        ++generation;
+        clearTimeout(timer);
+        more.hidden = true;
+        timer = setTimeout(() => search(), 300);
+    }
+    input.addEventListener('input', changed);
+    type.addEventListener('change', changed);
+    document.getElementById('search-form').addEventListener('submit', event => {
+        event.preventDefault(); clearTimeout(timer); search();
+    });
+    more.addEventListener('click', () => { more.disabled = true; search(nextOffset); });
+});
+
 // MAIN APPLICATION
 // ============================================
 
@@ -354,7 +455,7 @@ async function loadAlbumTracksById(albumId) {
 
     // Show the album back button
     const albumBackBtn = document.getElementById('album-back-btn');
-    if (albumBackBtn) albumBackBtn.style.display = 'flex';
+    if (albumBackBtn) albumBackBtn.style.display = currentArtistId ? 'flex' : 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
     const cached = getCache(cacheKey);
@@ -921,7 +1022,7 @@ async function loadAlbumTracks(albumId, albumName) {
     if (tracksPanelTitle) tracksPanelTitle.style.display = 'none';
 
     // Show the album back button
-    if (albumBackBtn) albumBackBtn.style.display = 'flex';
+    if (albumBackBtn) albumBackBtn.style.display = currentArtistId ? 'flex' : 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
 
@@ -951,6 +1052,7 @@ async function loadAlbumTracks(albumId, albumName) {
 
 // Go back from album tracks to albums list
 function goBackToAlbums() {
+    if (!currentArtistId) return;
     currentAlbumId = null;
 
     // Hide the album back button
@@ -1188,7 +1290,7 @@ function renderTracks(tracks) {
 }
 
 // Play specific track
-async function playTrack(uri) {
+async function playTrack(uri, explicitUri = false) {
     try {
         // Collect track URIs for artist top tracks (no playlist/album context)
         let trackUris = null;
@@ -1208,9 +1310,9 @@ async function playTrack(uri) {
             },
             body: JSON.stringify({
                 uri: uri,
-                playlist_id: currentPlaylistId,
-                album_id: currentAlbumId,
-                track_uris: trackUris
+                playlist_id: explicitUri ? null : currentPlaylistId,
+                album_id: explicitUri ? null : currentAlbumId,
+                track_uris: explicitUri ? null : trackUris
             })
         });
 

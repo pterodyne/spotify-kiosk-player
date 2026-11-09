@@ -36,6 +36,7 @@ load_dotenv()
 
 import socket
 from playback_target import PlaybackTarget, TargetError
+from keyboard_control import register_keyboard_routes
 playback_target = PlaybackTarget(
     os.path.expanduser('~/.config/spotify-player/playback_target.json'),
     os.getenv('SPOTIFY_DEVICE_NAME', '').split(',')[0].strip() or socket.gethostname()
@@ -50,6 +51,7 @@ def device_name_allowed(device):
 
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
+register_keyboard_routes(app)
 
 # API error cooldown - voorkomt escalatie bij tijdelijke Spotify problemen
 _last_api_error_time = 0
@@ -1310,6 +1312,64 @@ def _spotify_pages(sp, page):
         page = sp.next(page)
         items.extend(page.get('items') or [])
     return items
+
+
+@app.route('/api/search')
+def search_catalog():
+    """Search one bounded catalog page using the authenticated account's market."""
+    sp = get_spotify_client()
+    if not sp:
+        return jsonify({'error': 'Not authenticated'}), 401
+    query = request.args.get('q', '').strip()
+    search_type = request.args.get('type', 'track')
+    if not 1 <= len(query) <= 200:
+        return jsonify({'error': 'Query must contain 1 to 200 characters'}), 400
+    if search_type not in ('track', 'artist', 'album'):
+        return jsonify({'error': 'Type must be track, artist or album'}), 400
+    try:
+        offset = int(request.args.get('offset', '0'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Offset must be an integer from 0 to 1000'}), 400
+    if not 0 <= offset <= 1000:
+        return jsonify({'error': 'Offset must be an integer from 0 to 1000'}), 400
+    try:
+        results = sp.search(q=query, type=search_type, offset=offset, limit=10)
+        page = results[search_type + 's']
+        items = []
+        for item in page.get('items') or []:
+            if not item or not item.get('id'):
+                continue
+            images = item.get('images') or []
+            normalized = {
+                'id': item['id'], 'uri': item['uri'], 'name': item['name'],
+                'image': images[0]['url'] if images else None
+            }
+            if search_type == 'track':
+                album = item.get('album') or {}
+                images = album.get('images') or []
+                normalized.update(
+                    artist=', '.join(a['name'] for a in item.get('artists') or []),
+                    album=album.get('name', ''), album_uri=album.get('uri'),
+                    duration_ms=item.get('duration_ms', 0),
+                    image=images[0]['url'] if images else None)
+            elif search_type == 'album':
+                normalized.update(release_date=item.get('release_date', ''),
+                                  total_tracks=item.get('total_tracks', 0))
+            items.append(normalized)
+        return jsonify({'items': items, 'offset': offset,
+                        'next_offset': offset + 10 if page.get('next') and offset + 10 <= 1000 else None,
+                        'type': search_type, 'query': query})
+    except spotipy.exceptions.SpotifyException as error:
+        messages = {
+            401: 'Spotify authentication expired. Please sign in again.',
+            403: 'Spotify search is unavailable for this account or app.',
+            429: 'Spotify rate limit reached. Please try again later.'
+        }
+        status = error.http_status if error.http_status in messages else 502
+        return jsonify({'error': messages.get(status, 'Spotify search failed. Please try again later.')}), status
+    except Exception:
+        return jsonify({'error': 'Spotify search failed. Please try again later.'}), 502
+
 
 
 @app.route('/api/playlists')
