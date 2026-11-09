@@ -102,6 +102,107 @@ if (document.readyState === 'loading') {
 }
 
 // ============================================
+// Global search is separate from browsing state and cache.
+document.addEventListener('DOMContentLoaded', () => {
+    const container = document.querySelector('.container');
+    const panel = document.getElementById('search-panel');
+    const open = document.getElementById('open-search');
+    const input = document.getElementById('search-query');
+    const type = document.getElementById('search-type');
+    const results = document.getElementById('search-results');
+    const status = document.getElementById('search-status');
+    const more = document.getElementById('search-more');
+    let generation = 0;
+    let nextOffset = null;
+    let timer;
+    async function keyboard(action) {
+        try {
+            const response = await fetch('/api/keyboard', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({action})
+            });
+            const data = await response.json();
+            if ((!response.ok || data?.supported !== true) && action === 'show') status.textContent = 'On-screen keyboard unavailable. You can use a physical keyboard.';
+        } catch (_) {
+            if (action === 'show') status.textContent = 'On-screen keyboard unavailable. You can use a physical keyboard.';
+        }
+    }
+    function closeSearch() {
+        ++generation;
+        clearTimeout(timer);
+        panel.hidden = true;
+        container.classList.remove('search-open');
+        open.setAttribute('aria-expanded', 'false');
+        keyboard('hide');
+    }
+    open.addEventListener('click', () => {
+        panel.hidden = false;
+        container.classList.add('search-open');
+        open.setAttribute('aria-expanded', 'true');
+        input.focus();
+    });
+    document.getElementById('close-search').addEventListener('click', () => { closeSearch(); open.focus(); });
+    document.querySelector('.library-tracks-toggle').addEventListener('click', closeSearch);
+    input.addEventListener('focus', () => keyboard('show'));
+    document.getElementById('hide-search-keyboard').addEventListener('click', () => keyboard('hide'));
+    async function search(offset = 0) {
+        const query = input.value.trim();
+        const kind = type.value;
+        const request = ++generation;
+        if (!offset) results.replaceChildren();
+        more.hidden = true;
+        if (!query) { status.textContent = 'Enter a song, artist or album.'; return; }
+        status.textContent = 'Searching Spotify…';
+        try {
+            const params = new URLSearchParams({q: query, type: kind, offset: String(offset)});
+            const response = await fetch('/api/search?' + params);
+            const data = await response.json();
+            if (request !== generation) return;
+            if (!response.ok || !Array.isArray(data.items)) throw new Error('Search unavailable');
+            for (const item of data.items) {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'search-result';
+                button.textContent = item.name + (item.artist ? ' · ' + item.artist : '');
+                button.addEventListener('click', () => {
+                    if (kind === 'track') { keyboard('hide'); playTrack(item.uri, true); return; }
+                    closeSearch();
+                    currentViewMode = 'artists';
+                    currentPlaylistId = null;
+                    currentArtistId = null;
+                    currentAlbumId = null;
+                    document.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'artists'));
+                    document.querySelector('[data-pane="tracks"]').click();
+                    if (kind === 'artist') loadArtistAlbums(item.id);
+                    else loadAlbumTracks(item.id, item.name);
+                });
+                results.appendChild(button);
+            }
+            nextOffset = Number.isInteger(data.next_offset) && data.next_offset > offset ? data.next_offset : null;
+            more.hidden = nextOffset === null;
+            more.disabled = false;
+            status.textContent = results.children.length ? 'Spotify results' : 'No results found.';
+        } catch (_) {
+            if (request !== generation) return;
+            status.textContent = 'Unable to search Spotify. Please try again.';
+            more.hidden = !offset;
+            more.disabled = false;
+        }
+    }
+    function changed() {
+        ++generation;
+        clearTimeout(timer);
+        more.hidden = true;
+        timer = setTimeout(() => search(), 300);
+    }
+    input.addEventListener('input', changed);
+    type.addEventListener('change', changed);
+    document.getElementById('search-form').addEventListener('submit', event => {
+        event.preventDefault(); clearTimeout(timer); search();
+    });
+    more.addEventListener('click', () => { more.disabled = true; search(nextOffset); });
+});
+
 // MAIN APPLICATION
 // ============================================
 
@@ -111,7 +212,6 @@ let currentPlaylistId = null;
 let currentArtistId = null;
 let currentAlbumId = null;
 let currentViewMode = 'playlists'; // 'playlists' or 'artists'
-let currentArtistSubView = 'tracks'; // 'tracks' or 'albums' (only used in artists view)
 let isShuffleOn = false;
 let currentTrackId = null;
 let devicePollingInterval = null;
@@ -151,7 +251,6 @@ const CACHE_KEYS = {
     PLAYLISTS: 'spotify-playlists-cache',
     TRACKS_PREFIX: 'spotify-tracks-',
     ARTISTS: 'spotify-artists-cache',
-    ARTIST_TRACKS_PREFIX: 'spotify-artist-tracks-',
     ARTIST_ALBUMS_PREFIX: 'spotify-artist-albums-',
     ALBUM_TRACKS_PREFIX: 'spotify-album-tracks-'
 };
@@ -163,7 +262,7 @@ function getCache(key) {
         const cached = localStorage.getItem(key);
         if (!cached) return null;
         const { data, timestamp } = JSON.parse(cached);
-        if (Date.now() - timestamp > PLAYLIST_CACHE_TTL) {
+        if (!Array.isArray(data) || Date.now() - timestamp > PLAYLIST_CACHE_TTL) {
             localStorage.removeItem(key);
             return null;
         }
@@ -193,9 +292,6 @@ function clearPlaylistCache() {
 
 function clearArtistCache() {
     localStorage.removeItem(CACHE_KEYS.ARTISTS);
-    Object.keys(localStorage)
-        .filter(k => k.startsWith(CACHE_KEYS.ARTIST_TRACKS_PREFIX))
-        .forEach(k => localStorage.removeItem(k));
     // Also clear album cache for artists
     Object.keys(localStorage)
         .filter(k => k.startsWith(CACHE_KEYS.ARTIST_ALBUMS_PREFIX) || k.startsWith(CACHE_KEYS.ALBUM_TRACKS_PREFIX))
@@ -213,8 +309,6 @@ function updateURL() {
         if (currentArtistId) params.set('artist', currentArtistId);
         if (currentAlbumId) {
             params.set('album', currentAlbumId);
-        } else if (currentArtistSubView === 'albums') {
-            params.set('subview', 'albums');
         }
     }
 
@@ -228,7 +322,6 @@ async function restoreFromURL() {
     const playlistId = params.get('playlist');
     const artistId = params.get('artist');
     const albumId = params.get('album');
-    const subview = params.get('subview');
 
     // No URL params - use defaults
     if (!view) {
@@ -254,10 +347,8 @@ async function restoreFromURL() {
             btn.classList.toggle('active', btn.getAttribute('data-view') === 'artists');
         });
 
-        const artistSubToggle = document.getElementById('artist-sub-toggle');
-        if (artistSubToggle) artistSubToggle.style.display = 'flex';
-
-        await loadArtists();
+        // Keep an explicit deep link from being replaced by first-artist selection.
+        await loadArtists(!artistId);
 
         if (artistId) {
             currentArtistId = artistId;
@@ -268,20 +359,8 @@ async function restoreFromURL() {
                 // Load album tracks
                 currentAlbumId = albumId;
                 await loadAlbumTracksById(albumId);
-            } else if (subview === 'albums') {
-                currentArtistSubView = 'albums';
-                document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-                    btn.classList.toggle('active', btn.getAttribute('data-subview') === 'albums');
-                });
-                const tracksPanelTitle = document.getElementById('tracks-panel-title');
-                if (tracksPanelTitle) {
-                    tracksPanelTitle.style.display = 'block';
-                    tracksPanelTitle.textContent = 'Albums';
-                }
-                await loadArtistAlbums(artistId);
             } else {
-                // Default: load top tracks
-                await loadArtistTracksById(artistId);
+                await loadArtistAlbums(artistId);
             }
         }
     }
@@ -317,6 +396,30 @@ function highlightArtistItem(artistId) {
     });
 }
 
+// Read browsing responses before they can reach the cache or list renderers.
+async function readBrowseList(response, fallbackMessage) {
+    let data;
+    try {
+        data = await response.json();
+    } catch (error) {
+        throw new Error(fallbackMessage);
+    }
+    if (!response.ok || !Array.isArray(data)) {
+        const message = typeof data?.error === 'string' && data.error.trim()
+            ? data.error : fallbackMessage;
+        throw new Error(message);
+    }
+    return data;
+}
+
+// Server messages are untrusted text, never HTML.
+function showBrowseError(container, error, fallbackMessage) {
+    const state = document.createElement('div');
+    state.className = 'empty-state';
+    state.textContent = error.message || fallbackMessage;
+    container.replaceChildren(state);
+}
+
 // Helper to load tracks by ID (without button reference)
 async function loadTracksById(playlistId) {
     currentPlaylistId = playlistId;
@@ -333,47 +436,12 @@ async function loadTracksById(playlistId) {
 
     try {
         const response = await fetch(`/api/playlist/${playlistId}`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
         setCache(cacheKey, tracks);
         renderTracks(tracks);
     } catch (error) {
         console.error('Error loading tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
-    }
-}
-
-// Helper to load artist tracks by ID (without button reference)
-async function loadArtistTracksById(artistId) {
-    currentArtistId = artistId;
-    currentPlaylistId = null;
-    currentAlbumId = null;
-    currentArtistSubView = 'tracks';
-
-    resetArtistSubToggle();
-
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = t('panel.topTracks');
-    }
-
-    const cacheKey = CACHE_KEYS.ARTIST_TRACKS_PREFIX + artistId;
-    const cached = getCache(cacheKey);
-    if (cached) {
-        renderTracks(cached);
-        return;
-    }
-
-    tracksContainer.innerHTML = `<div class="loading">${t('loading.topTracks')}</div>`;
-
-    try {
-        const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await response.json();
-        setCache(cacheKey, tracks);
-        renderTracks(tracks);
-    } catch (error) {
-        console.error('Error loading artist tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -385,11 +453,9 @@ async function loadAlbumTracksById(albumId) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) tracksPanelTitle.style.display = 'none';
 
-    // Show back button, hide sub-toggle
+    // Show the album back button
     const albumBackBtn = document.getElementById('album-back-btn');
-    if (albumBackBtn) albumBackBtn.style.display = 'flex';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'none';
+    if (albumBackBtn) albumBackBtn.style.display = currentArtistId ? 'flex' : 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
     const cached = getCache(cacheKey);
@@ -403,12 +469,12 @@ async function loadAlbumTracksById(albumId) {
 
     try {
         const response = await fetch(`/api/album/${albumId}/tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
         setCache(cacheKey, tracks);
         renderAlbumTracks(tracks);
     } catch (error) {
         console.error('Error loading album tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -674,22 +740,14 @@ function setupEventListeners() {
     // Local devices toggle setup
     setupLocalDevicesToggle();
 
-    // Power saving toggle setup
-    setupPowerSavingToggle();
+    // Hardware display timeout setup
+    setupScreenTimeout();
 
     // View toggle (Playlists / Artists) event listeners
     document.querySelectorAll('.view-toggle-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             const view = btn.getAttribute('data-view');
             switchViewMode(view);
-        });
-    });
-
-    // Artist sub-toggle (Top Nummers / Albums) event listeners
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const subview = btn.getAttribute('data-subview');
-            switchArtistSubView(subview);
         });
     });
 
@@ -718,14 +776,14 @@ async function loadPlaylists() {
 
     try {
         const response = await fetch('/api/playlists');
-        const playlists = await response.json();
+        const playlists = await readBrowseList(response, t('error.loadPlaylists'));
 
         // Cache the result
         setCache(CACHE_KEYS.PLAYLISTS, playlists);
         renderPlaylists(playlists);
     } catch (error) {
         console.error('Error loading playlists:', error);
-        playlistsContainer.innerHTML = `<div class="empty-state">${t('error.loadPlaylists')}</div>`;
+        showBrowseError(playlistsContainer, error, t('error.loadPlaylists'));
     }
 }
 
@@ -783,20 +841,10 @@ function switchViewMode(mode) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = mode === 'playlists' ? 'Nummers' : 'Top Nummers';
+        tracksPanelTitle.textContent = mode === 'playlists' ? t('panel.tracks') : t('panel.albums');
     }
 
-    // Show/hide artist sub-toggle
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) {
-        artistSubToggle.style.display = mode === 'artists' ? 'flex' : 'none';
-    }
-
-    // Reset artist sub-view to tracks when switching modes
-    if (mode === 'playlists') {
-        currentArtistSubView = 'tracks';
-        resetArtistSubToggle();
-    }
+    if (albumBackBtn) albumBackBtn.style.display = 'none';
 
     // Animate content switch
     playlistsContainer.classList.add('switching');
@@ -822,67 +870,32 @@ function switchViewMode(mode) {
     }, 150);
 }
 
-// Reset artist sub-toggle to default state (tracks)
-function resetArtistSubToggle() {
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-subview') === 'tracks');
-    });
-}
-
-// Switch between top tracks and albums in artist view
-function switchArtistSubView(subview) {
-    if (subview === currentArtistSubView) return;
-    if (!currentArtistId) return; // No artist selected
-
-    currentArtistSubView = subview;
-    currentAlbumId = null; // Reset album selection
-
-    // Update sub-toggle buttons
-    document.querySelectorAll('.sub-toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-subview') === subview);
-    });
-
-    // Update panel title
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = subview === 'tracks' ? 'Top Nummers' : 'Albums';
-    }
-
-    // Load appropriate content
-    if (subview === 'tracks') {
-        loadArtistTracks(currentArtistId, document.querySelector('.artist-item.active'));
-    } else {
-        loadArtistAlbums(currentArtistId);
-    }
-}
-
 // Load artists
-async function loadArtists() {
+async function loadArtists(autoSelect = true) {
     // Check cache first
     const cached = getCache(CACHE_KEYS.ARTISTS);
     if (cached) {
-        renderArtists(cached);
+        renderArtists(cached, autoSelect);
         return;
     }
 
-    playlistsContainer.innerHTML = '<div class="loading">Artiesten laden...</div>';
+    playlistsContainer.innerHTML = `<div class="loading">${t('loading.artists')}</div>`;
 
     try {
         const response = await fetch('/api/artists');
-        const artists = await response.json();
+        const artists = await readBrowseList(response, t('error.loadArtists'));
 
         // Cache the result
         setCache(CACHE_KEYS.ARTISTS, artists);
-        renderArtists(artists);
+        renderArtists(artists, autoSelect);
     } catch (error) {
         console.error('Error loading artists:', error);
-        playlistsContainer.innerHTML = `<div class="empty-state">${t('error.loadArtists')}</div>`;
+        showBrowseError(playlistsContainer, error, t('error.loadArtists'));
     }
 }
 
 // Render artists to DOM
-function renderArtists(artists) {
+function renderArtists(artists, autoSelect = true) {
     playlistsContainer.innerHTML = '';
 
     if (artists.length === 0) {
@@ -907,71 +920,35 @@ function renderArtists(artists) {
         nameSpan.textContent = artist.name;
         btn.appendChild(nameSpan);
 
-        btn.onclick = () => loadArtistTracks(artist.id, btn);
+        btn.onclick = () => loadArtistAlbums(artist.id, btn);
         playlistsContainer.appendChild(btn);
     });
 
     // Automatically load first artist
-    if (artists.length > 0) {
+    if (autoSelect && artists.length > 0) {
         const firstBtn = playlistsContainer.querySelector('.artist-item');
         if (firstBtn) {
-            loadArtistTracks(artists[0].id, firstBtn);
+            loadArtistAlbums(artists[0].id, firstBtn);
         }
     }
 }
 
-// Load top tracks from artist
-async function loadArtistTracks(artistId, artistBtn) {
-    // Store current artist ID (no playlist context for artist tracks)
-    currentArtistId = artistId;
-    currentPlaylistId = null; // Clear playlist context
-    currentAlbumId = null; // Clear album context
-
-    // Update active state
-    document.querySelectorAll('.artist-item').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    if (artistBtn) artistBtn.classList.add('active');
-
-    // Reset sub-toggle to tracks when selecting a new artist
-    currentArtistSubView = 'tracks';
-    resetArtistSubToggle();
-
-    // Update panel title
-    const tracksPanelTitle = document.getElementById('tracks-panel-title');
-    if (tracksPanelTitle) {
-        tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = 'Top Nummers';
-    }
-
-    const cacheKey = CACHE_KEYS.ARTIST_TRACKS_PREFIX + artistId;
-
-    // Check cache first
-    const cached = getCache(cacheKey);
-    if (cached) {
-        renderTracks(cached);
-        updateURL();
-        return;
-    }
-
-    tracksContainer.innerHTML = '<div class="loading">Top nummers laden...</div>';
-
-    try {
-        const response = await fetch(`/api/artist/${artistId}/top-tracks`);
-        const tracks = await response.json();
-
-        // Cache the result
-        setCache(cacheKey, tracks);
-        renderTracks(tracks);
-        updateURL();
-    } catch (error) {
-        console.error('Error loading artist tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
-    }
-}
-
 // Load albums from artist
-async function loadArtistAlbums(artistId) {
+async function loadArtistAlbums(artistId, artistBtn) {
+    currentArtistId = artistId;
+    currentPlaylistId = null;
+    currentAlbumId = null;
+    document.querySelectorAll('.artist-item').forEach(btn => {
+        btn.classList.toggle('active', btn === artistBtn);
+    });
+    if (!artistBtn) highlightArtistItem(artistId);
+    if (albumBackBtn) albumBackBtn.style.display = 'none';
+    const title = document.getElementById('tracks-panel-title');
+    if (title) {
+        title.style.display = 'block';
+        title.textContent = t('panel.albums');
+    }
+
     const cacheKey = CACHE_KEYS.ARTIST_ALBUMS_PREFIX + artistId;
 
     // Check cache first
@@ -986,7 +963,7 @@ async function loadArtistAlbums(artistId) {
 
     try {
         const response = await fetch(`/api/artist/${artistId}/albums`);
-        const albums = await response.json();
+        const albums = await readBrowseList(response, t('error.loadAlbums'));
 
         // Cache the result
         setCache(cacheKey, albums);
@@ -994,7 +971,7 @@ async function loadArtistAlbums(artistId) {
         updateURL();
     } catch (error) {
         console.error('Error loading artist albums:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadAlbums')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadAlbums'));
     }
 }
 
@@ -1044,10 +1021,8 @@ async function loadAlbumTracks(albumId, albumName) {
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) tracksPanelTitle.style.display = 'none';
 
-    // Show back button, hide sub-toggle
-    if (albumBackBtn) albumBackBtn.style.display = 'flex';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'none';
+    // Show the album back button
+    if (albumBackBtn) albumBackBtn.style.display = currentArtistId ? 'flex' : 'none';
 
     const cacheKey = CACHE_KEYS.ALBUM_TRACKS_PREFIX + albumId;
 
@@ -1059,11 +1034,11 @@ async function loadAlbumTracks(albumId, albumName) {
         return;
     }
 
-    tracksContainer.innerHTML = '<div class="loading">Nummers laden...</div>';
+    tracksContainer.innerHTML = `<div class="loading">${t('loading.tracks')}</div>`;
 
     try {
         const response = await fetch(`/api/album/${albumId}/tracks`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
 
         // Cache the result
         setCache(cacheKey, tracks);
@@ -1071,24 +1046,23 @@ async function loadAlbumTracks(albumId, albumName) {
         updateURL();
     } catch (error) {
         console.error('Error loading album tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
 // Go back from album tracks to albums list
 function goBackToAlbums() {
+    if (!currentArtistId) return;
     currentAlbumId = null;
 
-    // Hide back button, show sub-toggle
+    // Hide the album back button
     if (albumBackBtn) albumBackBtn.style.display = 'none';
-    const artistSubToggle = document.getElementById('artist-sub-toggle');
-    if (artistSubToggle) artistSubToggle.style.display = 'flex';
 
     // Show and update panel title
     const tracksPanelTitle = document.getElementById('tracks-panel-title');
     if (tracksPanelTitle) {
         tracksPanelTitle.style.display = 'block';
-        tracksPanelTitle.textContent = 'Albums';
+        tracksPanelTitle.textContent = t('panel.albums');
     }
 
     // Load albums again
@@ -1239,11 +1213,11 @@ async function loadTracks(playlistId, playlistBtn) {
         return;
     }
 
-    tracksContainer.innerHTML = '<div class="loading">Nummers laden...</div>';
+    tracksContainer.innerHTML = `<div class="loading">${t('loading.tracks')}</div>`;
 
     try {
         const response = await fetch(`/api/playlist/${playlistId}`);
-        const tracks = await response.json();
+        const tracks = await readBrowseList(response, t('error.loadTracks'));
 
         // Cache the result
         setCache(cacheKey, tracks);
@@ -1251,7 +1225,7 @@ async function loadTracks(playlistId, playlistBtn) {
         updateURL();
     } catch (error) {
         console.error('Error loading tracks:', error);
-        tracksContainer.innerHTML = `<div class="empty-state">${t('error.loadTracks')}</div>`;
+        showBrowseError(tracksContainer, error, t('error.loadTracks'));
     }
 }
 
@@ -1316,7 +1290,7 @@ function renderTracks(tracks) {
 }
 
 // Play specific track
-async function playTrack(uri) {
+async function playTrack(uri, explicitUri = false) {
     try {
         // Collect track URIs for artist top tracks (no playlist/album context)
         let trackUris = null;
@@ -1336,9 +1310,9 @@ async function playTrack(uri) {
             },
             body: JSON.stringify({
                 uri: uri,
-                playlist_id: currentPlaylistId,
-                album_id: currentAlbumId,
-                track_uris: trackUris
+                playlist_id: explicitUri ? null : currentPlaylistId,
+                album_id: explicitUri ? null : currentAlbumId,
+                track_uris: explicitUri ? null : trackUris
             })
         });
 
@@ -1900,10 +1874,10 @@ function switchTab(tabName) {
         loadDefaultVolumeSetting();
     }
 
-    // Load network status and power saving status when switching to system tab
+    // Load network status and display timeout when switching to system tab
     if (tabName === 'system') {
         loadNetworkStatus();
-        loadPowerSavingStatus();
+        loadScreenTimeout();
     }
 
     // Load account info when switching to account tab
@@ -1960,6 +1934,14 @@ async function loadDevices() {
 
         const devicesList = document.getElementById('devices-list');
         devicesList.innerHTML = '';
+        const targetNotice = document.createElement('div');
+        targetNotice.className = 'empty-state';
+        targetNotice.textContent = apiData.target_error || 'Only allowed Spotify targets are listed. Click to select; click the selected target to deselect. Selection does not start playback.';
+        devicesList.appendChild(targetNotice);
+        const deselect = document.createElement('button');
+        deselect.textContent = 'Deselect playback target';
+        deselect.onclick = () => selectDevice(null);
+        devicesList.appendChild(deselect);
 
         const apiDevices = apiData.devices || [];
         const localDevices = localData.devices || [];
@@ -1978,7 +1960,7 @@ async function loadDevices() {
 
         // Check if we have any devices to show
         if (apiDevices.length === 0 && filteredLocalDevices.length === 0) {
-            devicesList.innerHTML = `<div class="empty-state">${t('empty.noDevices')}</div>`;
+            devicesList.insertAdjacentHTML('beforeend', `<div class="empty-state">${t('empty.noDevices')}</div>`);
             return;
         }
 
@@ -2012,10 +1994,10 @@ async function loadDevices() {
 function createDeviceElement(device) {
     const div = document.createElement('div');
     div.className = 'device-item';
-    if (device.is_active) div.classList.add('active');
+    if (device.is_selected) div.classList.add('active');
 
     const icon = getDeviceIcon(device.type);
-    const activeDot = device.is_active ? '<span class="active-dot"></span>' : '';
+    const activeDot = device.is_selected ? '<span class="active-dot"></span>' : '';
 
     div.innerHTML = `
         <span class="device-icon">${icon}</span>
@@ -2026,7 +2008,7 @@ function createDeviceElement(device) {
         ${activeDot}
     `;
 
-    div.onclick = () => selectDevice(device.id);
+    div.onclick = () => selectDevice(device.is_selected ? null : device.id);
     return div;
 }
 
@@ -2150,8 +2132,11 @@ async function selectDevice(deviceId) {
             body: JSON.stringify({ device_id: deviceId })
         });
 
+        const data = await response.json();
         if (response.ok) {
-            loadDevices(); // Refresh device list to show new active device
+            loadDevices(); // Refresh the persistent selection, not Spotify active state
+        } else {
+            showToast(data.error || t('error.selectDevice'), 'error');
         }
     } catch (error) {
         console.error('Error transferring playback:', error);
@@ -3469,50 +3454,77 @@ function setupLocalDevicesToggle() {
     }
 }
 
-// Setup power saving toggle
-function setupPowerSavingToggle() {
-    const powerSavingToggle = document.getElementById('power-saving-toggle');
+// Display idle policy runs in the Sway user session, not the browser.
+const SCREEN_TIMEOUT_SECONDS = [0, 30, 60, 300, 1800];
+const SCREEN_TIMEOUT_LABELS = ['Never', '30 sec', '1 min', '5 min', '30 min'];
+// GETs and POSTs share ownership of UI state; saving invalidates older loads.
+let screenTimeoutGeneration = 0;
+let screenTimeoutSaving = false;
 
-    if (powerSavingToggle) {
-        powerSavingToggle.addEventListener('change', async () => {
-            try {
-                const response = await fetch('/api/system/power-saving', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: powerSavingToggle.checked })
-                });
-
-                const data = await response.json();
-
-                if (data.error) {
-                    showToast(data.error, 'error');
-                    // Revert toggle
-                    powerSavingToggle.checked = !powerSavingToggle.checked;
-                } else if (data.reboot_required) {
-                    showToast(t('settings.rebootRequired'), 'info');
-                }
-            } catch (error) {
-                console.error('Error setting power saving:', error);
-                showToast(t('error.save'), 'error');
-                // Revert toggle
-                powerSavingToggle.checked = !powerSavingToggle.checked;
-            }
-        });
-    }
+function renderScreenTimeout(seconds) {
+    const input = document.getElementById('screen-timeout-slider');
+    const index = SCREEN_TIMEOUT_SECONDS.indexOf(seconds);
+    // Preserve legacy values without silently replacing them with a slider stop.
+    input.value = index < 0 ? 3 : index;
+    const label = index < 0 ? `${seconds / 60} min (legacy; select to change)` : SCREEN_TIMEOUT_LABELS[index];
+    input.setAttribute('aria-valuetext', label);
+    document.getElementById('screen-timeout-value').textContent = label;
 }
 
-// Load power saving status from backend
-async function loadPowerSavingStatus() {
-    const powerSavingToggle = document.getElementById('power-saving-toggle');
-
-    if (powerSavingToggle) {
+function setupScreenTimeout() {
+    const input = document.getElementById('screen-timeout-slider');
+    if (!input) return;
+    input.disabled = true;
+    input.addEventListener('input', () => renderScreenTimeout(SCREEN_TIMEOUT_SECONDS[Number(input.value)]));
+    input.addEventListener('change', async () => {
+        const seconds = SCREEN_TIMEOUT_SECONDS[Number(input.value)];
+        const status = document.getElementById('screen-timeout-status');
+        const generation = ++screenTimeoutGeneration;
+        screenTimeoutSaving = true;
+        input.disabled = true;
+        status.textContent = 'Saving…';
         try {
-            const response = await fetch('/api/system/power-saving');
+            const response = await fetch('/api/system/screen-timeout', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({seconds})
+            });
             const data = await response.json();
-            powerSavingToggle.checked = data.enabled || false;
+            if (generation !== screenTimeoutGeneration) return;
+            if (!response.ok) throw new Error(data.error || t('error.save'));
+            input.dataset.saved = data.seconds;
+            renderScreenTimeout(data.seconds);
+            status.textContent = 'Saved. Never keeps the display on.';
         } catch (error) {
-            console.error('Error loading power saving status:', error);
+            if (generation !== screenTimeoutGeneration) return;
+            renderScreenTimeout(Number(input.dataset.saved || 300));
+            status.textContent = 'Not saved: ' + error.message;
+            showToast(error.message, 'error');
+        } finally {
+            if (generation === screenTimeoutGeneration) {
+                screenTimeoutSaving = false;
+                input.disabled = false;
+            }
         }
+    });
+}
+
+async function loadScreenTimeout() {
+    const input = document.getElementById('screen-timeout-slider');
+    if (!input || screenTimeoutSaving) return;
+    const generation = ++screenTimeoutGeneration;
+    try {
+        const response = await fetch('/api/system/screen-timeout?unit=seconds');
+        const data = await response.json();
+        if (generation !== screenTimeoutGeneration) return;
+        if (!response.ok) throw new Error(data.error || t('error.save'));
+        renderScreenTimeout(data.seconds);
+        input.dataset.saved = data.seconds;
+    } catch (error) {
+        if (generation !== screenTimeoutGeneration) return;
+        document.getElementById('screen-timeout-status').textContent = 'Unable to load timeout: ' + error.message;
+        showToast(error.message, 'error');
+    } finally {
+        if (generation === screenTimeoutGeneration) input.disabled = false;
     }
 }
 

@@ -34,8 +34,26 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
+import socket
+from playback_target import PlaybackTarget, TargetError
+from keyboard_control import register_keyboard_routes
+playback_target = PlaybackTarget(
+    os.path.expanduser('~/.config/spotify-player/playback_target.json'),
+    os.getenv('SPOTIFY_DEVICE_NAME', '').split(',')[0].strip() or socket.gethostname()
+)
+
+
+def device_name_allowed(device):
+    """Keep the configured name allowlist for selection AND control."""
+    allowed = [name.strip().casefold() for name in os.getenv('SPOTIFY_DEVICE_NAME', '').split(',') if name.strip()]
+    return not allowed or any(name in device.get('name', '').casefold() for name in allowed)
+
+
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
+register_keyboard_routes(app)
+from display_timeout import register_display_routes
+register_display_routes(app)
 
 # API error cooldown - voorkomt escalatie bij tijdelijke Spotify problemen
 _last_api_error_time = 0
@@ -49,7 +67,7 @@ TRANSLATIONS = {
     'en': {
         # Error messages
         'error.not_logged_in': 'Not logged in',
-        'error.no_device': 'No Spotify device active. Select a device in settings.',
+        'error.no_device': 'No active Spotify Connect device. Open Spotify on the same account, select this player in the device list, then try again.',
         'error.device_not_allowed': 'Playback not allowed on this device',
         'error.playback_failed': 'Playback failed',
         'error.transfer_failed': 'Transfer failed',
@@ -57,6 +75,10 @@ TRANSLATIONS = {
         'error.rate_limit': 'Too many requests. Please wait a moment.',
         'error.server_error': 'Spotify server error. Please try again later.',
         'error.unknown': 'An unexpected error occurred',
+        'error.unavailable': 'Spotify is not responding. Please try again in a minute.',
+        'error.session_expired': 'Session expired. Please log in again.',
+        'error.forbidden': 'Access to this action is denied.',
+        'error.spotify_failed': 'Something went wrong with Spotify.',
 
         # Bluetooth messages
         'bt.not_available': 'Bluetooth not available on this system',
@@ -109,7 +131,7 @@ TRANSLATIONS = {
     'nl': {
         # Error messages
         'error.not_logged_in': 'Niet ingelogd',
-        'error.no_device': 'Geen Spotify apparaat actief. Selecteer een apparaat in het instellingen menu.',
+        'error.no_device': 'Geen actief Spotify Connect-apparaat. Open Spotify met hetzelfde account, selecteer deze speler in de apparatenlijst en probeer het opnieuw.',
         'error.device_not_allowed': 'Afspelen niet toegestaan op dit apparaat',
         'error.playback_failed': 'Afspelen mislukt',
         'error.transfer_failed': 'Overdracht mislukt',
@@ -117,6 +139,10 @@ TRANSLATIONS = {
         'error.rate_limit': 'Te veel verzoeken. Even geduld alsjeblieft.',
         'error.server_error': 'Spotify server fout. Probeer het later opnieuw.',
         'error.unknown': 'Er is een onverwachte fout opgetreden',
+        'error.unavailable': 'Spotify reageert niet. Probeer het over een minuut opnieuw.',
+        'error.session_expired': 'Sessie verlopen. Log opnieuw in.',
+        'error.forbidden': 'Geen toegang tot deze actie.',
+        'error.spotify_failed': 'Er ging iets mis met Spotify.',
 
         # Bluetooth messages
         'bt.not_available': 'Bluetooth niet beschikbaar op dit systeem',
@@ -471,7 +497,7 @@ def is_device_allowed(sp=None):
 
 
 def handle_spotify_error(e, activate_cooldown=True):
-    """Convert SpotifyException to user-friendly Dutch message and HTTP status code.
+    """Convert SpotifyException to a localized message and HTTP status code.
 
     Args:
         e: The exception
@@ -492,20 +518,20 @@ def handle_spotify_error(e, activate_cooldown=True):
         print(f"[Cooldown] API cooldown geactiveerd voor {_api_cooldown_seconds} seconden")
 
     if 'max retries' in error_str:
-        return 'Spotify reageert niet. Probeer het over een minuut opnieuw.', 503
+        return t('error.unavailable'), 503
     elif 'no active device' in error_str or 'device_not_found' in error_str or 'player command failed' in error_str:
-        return 'Geen Spotify apparaat actief. Selecteer een apparaat in het instellingen menu.', 404
+        return t('error.no_device'), 404
     elif 'rate limit' in error_str:
-        return 'Te veel verzoeken. Even wachten...', 429
+        return t('error.rate_limit'), 429
     elif '500' in error_str or '502' in error_str or '503' in error_str or '504' in error_str:
-        return 'Spotify heeft tijdelijk problemen. Probeer het later opnieuw.', 503
+        return t('error.server_error'), 503
     elif '401' in error_str or 'unauthorized' in error_str:
-        return 'Sessie verlopen. Log opnieuw in.', 401
+        return t('error.session_expired'), 401
     elif '403' in error_str or 'forbidden' in error_str:
         # Return tuple with error_type for frontend to detect account issues
-        return ('Geen toegang tot deze actie.', 'forbidden'), 403
+        return (t('error.forbidden'), 'forbidden'), 403
     else:
-        return 'Er ging iets mis met Spotify.', 500
+        return t('error.spotify_failed'), 500
 
 
 def spotify_playback_action(f):
@@ -516,11 +542,15 @@ def spotify_playback_action(f):
         if not sp:
             return jsonify({'error': t('error.not_logged_in')}), 401
 
-        if not is_device_allowed(sp):
-            return jsonify({'error': t('error.device_not_allowed')}), 403
-
         try:
-            return f(sp, *args, **kwargs)
+            target = playback_target.resolve(sp.devices().get('devices', []))
+            if not device_name_allowed(target):
+                return jsonify({'error': t('error.device_not_allowed')}), 403
+            if target.get('is_restricted'):
+                raise TargetError('Selected Spotify target is restricted. Select another target in Devices.')
+            return f(sp, target['id'], *args, **kwargs)
+        except TargetError as e:
+            return jsonify({'error': str(e), 'error_type': 'playback_target'}), 409
         except spotipy.exceptions.SpotifyException as e:
             result, status = handle_spotify_error(e)
             # Check if result is a tuple (msg, error_type) for 403 errors
@@ -1272,6 +1302,78 @@ def health_check():
 
 
 # API Endpoints
+def _spotify_pages(sp, page):
+    """Consume Spotify paging objects without silently truncating collections."""
+    items = list(page.get('items') or [])
+    seen = set()
+    while page.get('next'):
+        next_url = page['next']
+        if next_url in seen:
+            raise ValueError('Spotify returned a repeated pagination link')
+        seen.add(next_url)
+        page = sp.next(page)
+        items.extend(page.get('items') or [])
+    return items
+
+
+@app.route('/api/search')
+def search_catalog():
+    """Search one bounded catalog page using the authenticated account's market."""
+    sp = get_spotify_client()
+    if not sp:
+        return jsonify({'error': 'Not authenticated'}), 401
+    query = request.args.get('q', '').strip()
+    search_type = request.args.get('type', 'track')
+    if not 1 <= len(query) <= 200:
+        return jsonify({'error': 'Query must contain 1 to 200 characters'}), 400
+    if search_type not in ('track', 'artist', 'album'):
+        return jsonify({'error': 'Type must be track, artist or album'}), 400
+    try:
+        offset = int(request.args.get('offset', '0'))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'Offset must be an integer from 0 to 1000'}), 400
+    if not 0 <= offset <= 1000:
+        return jsonify({'error': 'Offset must be an integer from 0 to 1000'}), 400
+    try:
+        results = sp.search(q=query, type=search_type, offset=offset, limit=10)
+        page = results[search_type + 's']
+        items = []
+        for item in page.get('items') or []:
+            if not item or not item.get('id'):
+                continue
+            images = item.get('images') or []
+            normalized = {
+                'id': item['id'], 'uri': item['uri'], 'name': item['name'],
+                'image': images[0]['url'] if images else None
+            }
+            if search_type == 'track':
+                album = item.get('album') or {}
+                images = album.get('images') or []
+                normalized.update(
+                    artist=', '.join(a['name'] for a in item.get('artists') or []),
+                    album=album.get('name', ''), album_uri=album.get('uri'),
+                    duration_ms=item.get('duration_ms', 0),
+                    image=images[0]['url'] if images else None)
+            elif search_type == 'album':
+                normalized.update(release_date=item.get('release_date', ''),
+                                  total_tracks=item.get('total_tracks', 0))
+            items.append(normalized)
+        return jsonify({'items': items, 'offset': offset,
+                        'next_offset': offset + 10 if page.get('next') and offset + 10 <= 1000 else None,
+                        'type': search_type, 'query': query})
+    except spotipy.exceptions.SpotifyException as error:
+        messages = {
+            401: 'Spotify authentication expired. Please sign in again.',
+            403: 'Spotify search is unavailable for this account or app.',
+            429: 'Spotify rate limit reached. Please try again later.'
+        }
+        status = error.http_status if error.http_status in messages else 502
+        return jsonify({'error': messages.get(status, 'Spotify search failed. Please try again later.')}), status
+    except Exception:
+        return jsonify({'error': 'Spotify search failed. Please try again later.'}), 502
+
+
+
 @app.route('/api/playlists')
 def get_playlists():
     """Get user's playlists"""
@@ -1281,41 +1383,23 @@ def get_playlists():
 
     try:
         # Fetch ALL playlists with pagination
-        all_playlists = []
+        # Verified live: /me/playlists still accepts 50 (artist albums do not).
         results = sp.current_user_playlists(limit=50)
-        all_playlists.extend(results['items'])
-
-        # Keep fetching next pages until there are no more
-        while results['next']:
-            results = sp.next(results)
-            all_playlists.extend(results['items'])
+        all_playlists = _spotify_pages(sp, results)
 
         # Map to response format
         items = [
             {
                 'id': p['id'],
                 'name': p['name'],
-                'image': p['images'][0]['url'] if p['images'] else None,
-                'tracks_total': p['tracks']['total']
+                'image': p['images'][0]['url'] if p.get('images') else None,
+                'tracks_total': (p.get('items') or p.get('tracks') or {}).get('total', 0)
             }
             for p in all_playlists
         ]
 
-        # Debug logging (with error handling)
-        try:
-            print(f"\n=== PLAYLISTS DEBUG ===")
-            print(f"Total playlists fetched: {len(items)}")
-            print(f"Spotify API reported total: {results.get('total', 'unknown')}")
-            print(f"Has more pages: {results.get('next') is not None}")
-            print(f"\nPlaylist names:")
-            for i, item in enumerate(items, 1):
-                try:
-                    print(f"  {i}. {item['name']}")
-                except Exception as e:
-                    print(f"  {i}. [Error printing name: {e}]")
-            print(f"======================\n")
-        except Exception as e:
-            print(f"Debug logging error: {e}")
+        # Log counts only, never personal library content.
+        print(f"Fetched {len(items)} playlists")
 
         return jsonify(items)
     except Exception as e:
@@ -1371,7 +1455,8 @@ def get_artist_top_tracks(artist_id):
 
     try:
         # Get top tracks (Spotify returns max 10)
-        results = sp.artist_top_tracks(artist_id, country='NL')
+        # No market override: the authenticated account determines availability.
+        results = sp._get(f'artists/{artist_id}/top-tracks')
 
         tracks = [
             {
@@ -1386,6 +1471,15 @@ def get_artist_top_tracks(artist_id):
             for track in results['tracks']
         ]
         return jsonify(tracks)
+    except spotipy.exceptions.SpotifyException as e:
+        if e.http_status == 403:
+            return jsonify({
+                'error': 'Artist top tracks are unavailable for this Spotify app. Browse albums instead.',
+                'error_type': 'unsupported_feature',
+                'feature': 'artist_top_tracks',
+                'supported': False
+            }), 403
+        return jsonify({'error': 'Spotify request failed', 'error_type': 'spotify_error'}), e.http_status
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1398,7 +1492,8 @@ def get_artist_albums(artist_id):
 
     try:
         # Get only full albums (no singles/EPs)
-        results = sp.artist_albums(artist_id, album_type='album', country='NL', limit=50)
+        results = sp.artist_albums(artist_id, album_type='album', limit=10)
+        all_albums = _spotify_pages(sp, results)
 
         albums = [
             {
@@ -1409,7 +1504,7 @@ def get_artist_albums(artist_id):
                 'release_date': album['release_date'],
                 'total_tracks': album['total_tracks']
             }
-            for album in results['items']
+            for album in all_albums
         ]
 
         print(f"Fetched {len(albums)} albums for artist {artist_id}")
@@ -1431,7 +1526,8 @@ def get_album_tracks(album_id):
         album_uri = album_info['uri']
 
         # Get album tracks
-        results = sp.album_tracks(album_id)
+        results = sp.album_tracks(album_id, limit=10)
+        all_tracks = _spotify_pages(sp, results)
 
         tracks = [
             {
@@ -1446,7 +1542,7 @@ def get_album_tracks(album_id):
                 'track_number': track['track_number'],
                 'release_date': album_info.get('release_date', '')
             }
-            for track in results['items']
+            for track in all_tracks
         ]
 
         return jsonify(tracks)
@@ -1461,21 +1557,33 @@ def get_playlist_tracks(playlist_id):
         return jsonify({'error': 'Not authenticated'}), 401
 
     try:
-        results = sp.playlist_items(playlist_id)
+        # Older Spotipy versions still route playlist_items() to /tracks.
+        results = sp._get(f'playlists/{playlist_id}/items', limit=10)
+        entries = _spotify_pages(sp, results)
+        playlist_tracks = [entry.get('item', entry.get('track')) for entry in entries]
+        playlist_tracks = [track for track in playlist_tracks
+                           if track and track.get('type', 'track') == 'track'
+                           and track.get('id') and not track.get('is_local')]
         tracks = [
             {
-                'id': item['track']['id'],
-                'uri': item['track']['uri'],
-                'name': item['track']['name'],
-                'artist': ', '.join([artist['name'] for artist in item['track']['artists']]),
-                'album': item['track']['album']['name'],
-                'duration_ms': item['track']['duration_ms'],
-                'image': item['track']['album']['images'][0]['url'] if item['track']['album']['images'] else None
+                'id': track['id'],
+                'uri': track['uri'],
+                'name': track['name'],
+                'artist': ', '.join([artist['name'] for artist in track['artists']]),
+                'album': track['album']['name'],
+                'duration_ms': track['duration_ms'],
+                'image': track['album']['images'][0]['url'] if track['album']['images'] else None
             }
-            for item in results['items']
-            if item['track']  # Skip None tracks
+            for track in playlist_tracks
         ]
         return jsonify(tracks)
+    except spotipy.exceptions.SpotifyException as e:
+        if e.http_status == 403:
+            return jsonify({
+                'error': 'Spotify only allows playlist items for playlists you own or collaborate on.',
+                'error_type': 'playlist_access_restricted'
+            }), 403
+        return jsonify({'error': 'Spotify request failed', 'error_type': 'spotify_error'}), e.http_status
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -1540,35 +1648,35 @@ def get_current_track():
 
 @app.route('/api/play', methods=['POST'])
 @spotify_playback_action
-def play(sp):
+def play(sp, device_id):
     """Resume playback"""
-    sp.start_playback()
+    sp.start_playback(device_id=device_id)
     return jsonify({'success': True})
 
 @app.route('/api/pause', methods=['POST'])
 @spotify_playback_action
-def pause(sp):
+def pause(sp, device_id):
     """Pause playback"""
-    sp.pause_playback()
+    sp.pause_playback(device_id=device_id)
     return jsonify({'success': True})
 
 @app.route('/api/next', methods=['POST'])
 @spotify_playback_action
-def next_track(sp):
+def next_track(sp, device_id):
     """Skip to next track"""
-    sp.next_track()
+    sp.next_track(device_id=device_id)
     return jsonify({'success': True})
 
 @app.route('/api/previous', methods=['POST'])
 @spotify_playback_action
-def previous_track(sp):
+def previous_track(sp, device_id):
     """Skip to previous track"""
-    sp.previous_track()
+    sp.previous_track(device_id=device_id)
     return jsonify({'success': True})
 
 @app.route('/api/play-track', methods=['POST'])
 @spotify_playback_action
-def play_track(sp):
+def play_track(sp, device_id):
     """Play a specific track"""
     data = request.get_json()
     track_uri = data.get('uri')
@@ -1581,33 +1689,33 @@ def play_track(sp):
     if playlist_id:
         # Play from playlist context with offset to specific track
         context_uri = f'spotify:playlist:{playlist_id}'
-        sp.start_playback(context_uri=context_uri, offset={'uri': track_uri})
+        sp.start_playback(device_id=device_id, context_uri=context_uri, offset={'uri': track_uri})
     elif album_id:
         # Play from album context with offset to specific track
         context_uri = f'spotify:album:{album_id}'
-        sp.start_playback(context_uri=context_uri, offset={'uri': track_uri})
+        sp.start_playback(device_id=device_id, context_uri=context_uri, offset={'uri': track_uri})
     else:
         # Check for track URIs list (e.g., artist top tracks)
         track_uris = data.get('track_uris')
         if track_uris:
-            sp.start_playback(uris=track_uris)
+            sp.start_playback(device_id=device_id, uris=track_uris)
         else:
             # Fallback: play only this track (backwards compatible)
-            sp.start_playback(uris=[track_uri])
+            sp.start_playback(device_id=device_id, uris=[track_uri])
     return jsonify({'success': True})
 
 @app.route('/api/shuffle', methods=['POST'])
 @spotify_playback_action
-def toggle_shuffle(sp):
+def toggle_shuffle(sp, device_id):
     """Toggle shuffle mode"""
     data = request.get_json()
     shuffle_state = data.get('state', False)
-    sp.shuffle(shuffle_state)
+    sp.shuffle(shuffle_state, device_id=device_id)
     return jsonify({'success': True, 'shuffle': shuffle_state})
 
 @app.route('/api/volume', methods=['POST'])
 @spotify_playback_action
-def set_volume(sp):
+def set_volume(sp, device_id):
     """Set playback volume"""
     data = request.get_json()
     volume_percent = data.get('volume_percent')
@@ -1617,12 +1725,12 @@ def set_volume(sp):
 
     # Ensure volume is between 0 and 100
     volume_percent = max(0, min(100, int(volume_percent)))
-    sp.volume(volume_percent)
+    sp.volume(volume_percent, device_id=device_id)
     return jsonify({'success': True, 'volume_percent': volume_percent})
 
 @app.route('/api/seek', methods=['POST'])
 @spotify_playback_action
-def seek_track(sp):
+def seek_track(sp, device_id):
     """Seek to position in current track"""
     data = request.get_json()
     position_ms = data.get('position_ms')
@@ -1631,7 +1739,7 @@ def seek_track(sp):
         return jsonify({'error': 'No position_ms provided'}), 400
 
     position_ms = max(0, int(position_ms))
-    sp.seek_track(position_ms)
+    sp.seek_track(position_ms, device_id=device_id)
     return jsonify({'success': True, 'position_ms': position_ms})
 
 @app.route('/api/devices')
@@ -1644,15 +1752,15 @@ def get_devices():
     try:
         devices_response = sp.devices()
 
-        # Filter devices based on SPOTIFY_DEVICE_NAME if set
-        device_name_filter = os.getenv('SPOTIFY_DEVICE_NAME', '').strip()
-        if device_name_filter:
-            filtered_devices = [
-                d for d in devices_response.get('devices', [])
-                if device_name_filter.lower() in d['name'].lower()
-            ]
-            devices_response['devices'] = filtered_devices
-
+        devices_response['devices'] = [d for d in devices_response.get('devices', []) if device_name_allowed(d)]
+        try:
+            selected = playback_target.resolve(devices_response['devices'])
+            devices_response['selected_device_id'] = selected['id']
+        except TargetError as e:
+            devices_response['selected_device_id'] = None
+            devices_response['target_error'] = str(e)
+        for device in devices_response['devices']:
+            device['is_selected'] = device['id'] == devices_response['selected_device_id']
         return jsonify(devices_response)
     except spotipy.exceptions.SpotifyException as e:
         msg, status = handle_spotify_error(e)
@@ -1663,20 +1771,28 @@ def get_devices():
 
 @app.route('/api/transfer-playback', methods=['POST'])
 def transfer_playback():
-    """Transfer playback to a device"""
+    """Persist a deliberate target choice without transferring or starting audio."""
     sp = get_spotify_client()
     if not sp:
         return jsonify({'error': t('error.not_logged_in')}), 401
 
-    data = request.get_json()
-    device_id = data.get('device_id')
-
-    if not device_id:
-        return jsonify({'error': t('error.device_not_found')}), 400
-
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or 'device_id' not in data:
+        return jsonify({'error': 'Provide device_id, or null to deselect.'}), 400
+    device_id = data['device_id']
     try:
-        sp.transfer_playback(device_id, force_play=True)
-        return jsonify({'success': True})
+        if device_id is not None:
+            device = next((d for d in sp.devices().get('devices', []) if d.get('id') == device_id), None)
+            if not device:
+                return jsonify({'error': 'Intended target unavailable. Open Spotify on the same account, then select it in Devices.'}), 409
+            if not device_name_allowed(device):
+                return jsonify({'error': t('error.device_not_allowed')}), 403
+            if device.get('is_restricted'):
+                return jsonify({'error': 'Target is restricted; select another target.'}), 409
+        playback_target.select(device_id)
+        return jsonify({'success': True, 'selected_device_id': device_id})
+    except TargetError as e:
+        return jsonify({'error': str(e)}), 400
     except spotipy.exceptions.SpotifyException as e:
         msg, status = handle_spotify_error(e)
         return jsonify({'error': msg}), status
@@ -1686,38 +1802,9 @@ def transfer_playback():
 
 @app.route('/api/transfer-playback-local', methods=['POST'])
 def transfer_playback_local():
-    """Transfer playback to a locally discovered mDNS device.
-
-    This attempts to transfer playback using the device_id obtained from
-    the ZeroConf getInfo endpoint, even if the device is not (yet) visible
-    in the Spotify Web API.
-    """
-    sp = get_spotify_client()
-    if not sp:
-        return jsonify({'error': 'Not authenticated'}), 401
-
-    data = request.get_json()
-    device_id = data.get('device_id')
-
-    if not device_id:
-        return jsonify({'error': 'No device ID provided'}), 400
-
-    try:
-        # Try direct transfer with the mDNS device_id
-        sp.transfer_playback(device_id, force_play=True)
-        return jsonify({'success': True, 'method': 'direct_transfer'})
-    except spotipy.exceptions.SpotifyException as e:
-        error_str = str(e).lower()
-        if 'device not found' in error_str or 'not found' in error_str:
-            # Device not recognized by Spotify - needs ZeroConf activation
-            return jsonify({
-                'success': False,
-                'error': 'Device niet gevonden. ZeroConf activatie nodig.',
-                'needs_activation': True
-            }), 404
-        return jsonify({'error': str(e)}), 500
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # mDNS IDs alone are not account registration: require the same validated
+    # selection path as cloud devices, without starting audio.
+    return transfer_playback()
 
 
 @app.route('/api/devices/local/activate', methods=['POST'])
@@ -1747,6 +1834,8 @@ def activate_local_device():
 
     if not device_name:
         return jsonify({'error': 'device_name is verplicht'}), 400
+    if not device_name_allowed({'name': device_name}):
+        return jsonify({'error': t('error.device_not_allowed')}), 403
 
     try:
         # STAP 1: Check of device al in Spotify API staat
@@ -1759,6 +1848,7 @@ def activate_local_device():
             is_active = existing_device.get('is_active', False)
 
             if is_active:
+                playback_target.select(spotify_device_id)
                 # Device gevonden en al actief - geen actie nodig
                 print(f"[ZeroConf] Device '{device_name}' already active, nothing to do")
                 return jsonify({
@@ -1771,11 +1861,11 @@ def activate_local_device():
                 # Device gevonden maar inactief - direct transfer (skip activatie)
                 print(f"[ZeroConf] Device '{device_name}' found but inactive, transferring...")
                 try:
-                    sp.transfer_playback(spotify_device_id, force_play=True)
+                    playback_target.select(spotify_device_id)
                     print(f"[ZeroConf] Transfer successful to {device_name}")
                     return jsonify({
                         'success': True,
-                        'message': f'Playback overgedragen naar {device_name}',
+                        'message': f'Playback target selected: {device_name}. Press Play to start.',
                         'spotify_device_id': spotify_device_id,
                         'skipped_activation': True
                     })
@@ -1832,21 +1922,21 @@ def activate_local_device():
             except Exception as e:
                 print(f"[ZeroConf] Error fetching devices: {e}")
 
-        # STAP 4: Transfer playback
+        # STAP 4: Persist target without starting playback
         if spotify_device_id:
             try:
-                sp.transfer_playback(spotify_device_id, force_play=True)
+                playback_target.select(spotify_device_id)
                 print(f"[ZeroConf] Step 4: Transfer successful to {device_name}")
                 return jsonify({
                     'success': True,
-                    'message': f'Device geactiveerd en playback overgedragen naar {device_name}',
+                    'message': f'Device activated and selected: {device_name}. Press Play to start.',
                     'spotify_device_id': spotify_device_id
                 })
             except Exception as e:
                 print(f"[ZeroConf] Transfer failed: {e}")
                 return jsonify({
                     'success': True,
-                    'message': 'Device geactiveerd, maar transfer mislukt',
+                    'message': 'Device activated, but target selection could not be saved',
                     'error': str(e),
                     'spotify_device_id': spotify_device_id
                 })
@@ -2682,47 +2772,6 @@ def system_update():
         return jsonify({'error': 'Update timeout - probeer opnieuw'}), 500
     except Exception as e:
         print(f"[Update] Error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/system/power-saving', methods=['GET'])
-def get_power_saving():
-    """Check if power saving is enabled (arm_freq=1800)"""
-    try:
-        with open('/boot/firmware/config.txt', 'r') as f:
-            content = f.read()
-            enabled = 'arm_freq=1800' in content
-        return jsonify({'enabled': enabled})
-    except:
-        return jsonify({'enabled': False, 'error': 'Cannot read config'})
-
-
-@app.route('/api/system/power-saving', methods=['POST'])
-def set_power_saving():
-    """Enable/disable power saving (requires reboot)"""
-    data = request.get_json() or {}
-    enable = data.get('enabled', True)
-
-    try:
-        if enable:
-            # Add arm_freq=1800 if not present
-            result = subprocess.run(
-                ['sudo', 'bash', '-c',
-                 'grep -q "^arm_freq=" /boot/firmware/config.txt || echo "arm_freq=1800" >> /boot/firmware/config.txt'],
-                capture_output=True, text=True, timeout=10
-            )
-        else:
-            # Remove arm_freq line
-            result = subprocess.run(
-                ['sudo', 'sed', '-i', '/^arm_freq=/d', '/boot/firmware/config.txt'],
-                capture_output=True, text=True, timeout=10
-            )
-
-        if result.returncode != 0:
-            return jsonify({'error': result.stderr or 'Command failed'}), 500
-
-        return jsonify({'success': True, 'reboot_required': True})
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 

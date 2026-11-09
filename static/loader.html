@@ -1,142 +1,58 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Laden...</title>
+    <title>Loading - Spotify Kiosk Player</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: white;
-        }
-
-        .container {
-            text-align: center;
-            padding: 40px;
-        }
-
-        .logo {
-            font-size: 80px;
-            margin-bottom: 30px;
-        }
-
-        .spinner {
-            width: 70px;
-            height: 70px;
-            border: 5px solid rgba(255, 255, 255, 0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 30px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .title {
-            font-size: 32px;
-            font-weight: 600;
-            margin-bottom: 16px;
-        }
-
-        .status {
-            font-size: 20px;
-            opacity: 0.9;
-            margin-bottom: 30px;
-        }
-
-        .progress-container {
-            width: 300px;
-            height: 8px;
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 4px;
-            overflow: hidden;
-            margin: 0 auto;
-        }
-
-        .progress-bar {
-            height: 100%;
-            background: white;
-            width: 0%;
-            transition: width 0.3s ease;
-            border-radius: 4px;
-        }
-
-        /* Error state */
-        .error-state {
-            display: none;
-        }
-
-        .error-icon {
-            font-size: 72px;
-            margin-bottom: 20px;
-        }
-
-        .error-message {
-            font-size: 18px;
-            margin-bottom: 30px;
-            line-height: 1.6;
-            max-width: 400px;
-        }
-
-        .retry-btn {
-            background: white;
-            color: #667eea;
-            border: none;
-            padding: 18px 50px;
-            font-size: 20px;
-            font-weight: 600;
-            border-radius: 50px;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
-
-        .retry-btn:hover {
-            transform: scale(1.05);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
-        }
-
-        .retry-btn:active {
-            transform: scale(0.98);
-        }
+* { margin:0; padding:0; box-sizing:border-box; }
+:root { color-scheme:dark; }
+body { font-family:system-ui,-apple-system,'Segoe UI',sans-serif; background:#090b0a; color:#f5f7f5; min-height:100vh; min-height:100svh; display:grid; place-items:center; padding:24px; }
+.container { width:min(100%,400px); text-align:center; }
+.logo { display:block; width:clamp(80px,18vmin,120px); height:auto; color:#1ed760; margin:0 auto 24px; }
+.title { font-size:clamp(28px,5vmin,36px); font-weight:650; letter-spacing:-.035em; line-height:1.2; }
+.status { color:#a2aaa5; font-size:14px; line-height:1.5; margin-top:18px; }
+.equalizer { display:flex; align-items:center; justify-content:center; gap:5px; height:24px; margin:36px auto 0; }
+.equalizer span { width:3px; height:16px; border-radius:3px; background:#1ed760; animation:equalize 1.2s ease-in-out infinite; }
+.equalizer span:nth-child(2) { animation-delay:-.8s; height:24px; }
+.equalizer span:nth-child(3) { animation-delay:-.4s; height:20px; }
+.equalizer span:nth-child(4) { animation-delay:-.6s; height:12px; }
+@keyframes equalize { 0%,100% { transform:scaleY(.35); opacity:.45; } 50% { transform:scaleY(1); opacity:1; } }
+/* Preserve the polling target without implying a completion percentage. */
+.progress-bar { display:none; }
+.sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.error-state { display:none; }
+.error-icon { width:40px; height:40px; display:grid; place-items:center; margin:0 auto 20px; border:1px solid #526056; border-radius:50%; color:#a2aaa5; font-size:22px; }
+.error-state .title { font-size:clamp(24px,4vmin,30px); }
+.error-message { color:#a2aaa5; font-size:14px; line-height:1.6; margin:16px 0 24px; }
+.retry-btn { background:#1ed760; color:#090b0a; border:0; border-radius:999px; min-height:48px; padding:12px 32px; font:650 15px system-ui,sans-serif; cursor:pointer; }
+.retry-btn:hover { background:#3be477; }
+.retry-btn:focus-visible { outline:2px solid #f5f7f5; outline-offset:5px; }
+.retry-btn:active { background:#1bbd54; }
+@media (max-height:380px) { body { padding:20px; } .logo { width:72px; margin-bottom:16px; } .equalizer { margin-top:24px; } .status { margin-top:12px; } }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none !important; transition:none !important; } }
     </style>
 </head>
 <body>
-    <!-- Loading State -->
-    <div class="container" id="loading-state">
-        <div class="logo">🎵</div>
-        <div class="spinner"></div>
-        <h1 class="title">Muziekspeler</h1>
-        <p class="status" id="status-text">Opstarten...</p>
-        <div class="progress-container">
-            <div class="progress-bar" id="progress-bar"></div>
-        </div>
-    </div>
-
-    <!-- Error State -->
-    <div class="container error-state" id="error-state">
-        <div class="error-icon">😢</div>
-        <h1 class="title">Oeps!</h1>
+    <main class="container" id="loading-state" aria-label="Spotify Kiosk Player">
+        <svg class="logo" viewBox="0 0 24 24" fill="currentColor" role="img" aria-label="Spotify">
+            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+        </svg>
+        <h1 class="title">Player</h1>
+        <span class="sr-only">Spotify Kiosk Player</span>
+        <div class="equalizer" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <p class="status" id="status-text" role="status" aria-live="polite" aria-atomic="true">Starting...</p>
+        <div class="progress-bar" id="progress-bar" aria-hidden="true"></div>
+    </main>
+    <section class="container error-state" id="error-state" aria-labelledby="error-title" role="alert">
+        <div class="error-icon" aria-hidden="true">!</div>
+        <h1 class="title" id="error-title">Something went wrong</h1>
         <p class="error-message">
-            De muziekspeler kon niet worden gestart.<br>
-            Probeer het opnieuw of herstart het apparaat.
+            Spotify Kiosk Player could not start.<br>
+            Try again or restart the device.
         </p>
-        <button class="retry-btn" onclick="startHealthCheck()">Opnieuw proberen</button>
-    </div>
+        <button class="retry-btn" onclick="startHealthCheck()">Try again</button>
+    </section>
 
     <script>
         const CONFIG = {
@@ -183,13 +99,13 @@
 
             // Update status based on progress
             if (attempts < 10) {
-                updateStatus('Opstarten...');
+                updateStatus('Starting...');
             } else if (attempts < 40) {
-                updateStatus('Services laden...');
+                updateStatus('Loading services...');
             } else if (attempts < 80) {
-                updateStatus('Bijna klaar...');
+                updateStatus('Almost ready...');
             } else {
-                updateStatus('Even geduld...');
+                updateStatus('Please wait...');
             }
 
             try {
@@ -207,7 +123,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     if (data.status === 'ok') {
-                        updateStatus('Gereed!');
+                        updateStatus('Ready!');
                         updateProgress(100);
                         // Short delay for visual feedback
                         setTimeout(() => {

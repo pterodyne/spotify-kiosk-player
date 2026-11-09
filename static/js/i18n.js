@@ -111,7 +111,10 @@ const translations = {
         'settings.internetStatus': 'Internet',
         'settings.online': 'Connected',
         'settings.offline': 'No connection',
-        'settings.powerSaving': 'Power Saving',
+        'settings.screenTimeout': 'Display off after idle minutes (0 = Never)',
+        'settings.saveTimeout': 'Save',
+        'settings.neverTimeout': 'Never',
+        'settings.screenTimeoutHelp': 'Turns the hardware display off, not just a black overlay. Touch to wake; music continues. Touch electronics stay powered.',
         'settings.rebootRequired': 'Reboot required to apply changes',
 
         // Settings - Account tab
@@ -353,7 +356,10 @@ const translations = {
         'settings.internetStatus': 'Internet',
         'settings.online': 'Verbonden',
         'settings.offline': 'Geen verbinding',
-        'settings.powerSaving': 'Energiebesparing',
+        'settings.screenTimeout': 'Scherm uit na inactieve minuten (0 = Nooit)',
+        'settings.saveTimeout': 'Opslaan',
+        'settings.neverTimeout': 'Nooit',
+        'settings.screenTimeoutHelp': 'Schakelt het scherm echt uit, niet alleen een zwarte laag. Raak aan om te wekken; muziek blijft spelen. De aanraakelektronica blijft aan.',
         'settings.rebootRequired': 'Herstart vereist om wijzigingen toe te passen',
 
         // Settings - Account tab

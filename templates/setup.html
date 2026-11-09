@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Setup - Kids Spotify Player</title>
+    <title>Setup - Spotify Kiosk Player</title>
     <style>
         * {
             margin: 0;
@@ -146,75 +146,74 @@
 </head>
 <body>
     <div class="setup-container">
-        <h1>🎵 Welkom bij Kids Spotify Player</h1>
-        <p class="subtitle">Je moet eerst je Spotify credentials instellen voordat je kunt beginnen.</p>
+        <h1>🎵 Welcome to Spotify Kiosk Player</h1>
+        <p class="subtitle">Configure your Spotify credentials before you begin.</p>
 
         <div class="step">
             <h2><span class="number">1</span> Spotify Developer Account</h2>
             <ol>
-                <li>Ga naar <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a></li>
-                <li>Log in met je Spotify account</li>
-                <li>Klik op <strong>"Create app"</strong> (of "Create an App")</li>
-                <li>Vul in:
+                <li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank">Spotify Developer Dashboard</a></li>
+                <li>Log in with your Spotify account</li>
+                <li>Click <strong>"Create app"</strong> (or "Create an App")</li>
+                <li>Enter:
                     <ul>
-                        <li><strong>App name:</strong> Kids Spotify Player (of een andere naam)</li>
-                        <li><strong>App description:</strong> Kids-friendly music player</li>
-                        <li><strong>Redirect URI:</strong> <span class="highlight">http://localhost:5000/callback</span></li>
+                        <li><strong>App name:</strong> Spotify Kiosk Player (or another name)</li>
+                        <li><strong>App description:</strong> Kiosk music player</li>
+                        <li><strong>Redirect URI:</strong> <span class="highlight">http://127.0.0.1:5000/callback</span></li>
                     </ul>
                 </li>
-                <li>Vink aan: <strong>Web API</strong></li>
-                <li>Accepteer de terms en klik <strong>"Save"</strong></li>
+                <li>Select: <strong>Web API</strong></li>
+                <li>Accept the terms and click <strong>"Save"</strong></li>
             </ol>
 
             <div class="warning">
-                <strong>⚠️ Belangrijk over Redirect URI:</strong><br>
-                Spotify accepteert <code>http://localhost</code> voor lokale ontwikkeling.
-                Je hoeft GEEN HTTPS te gebruiken voor localhost!<br>
-                Zorg dat je exact dit invult: <span class="highlight">http://localhost:5000/callback</span>
+                <strong>⚠️ Important: Redirect URI</strong><br>
+                Use the loopback IP address configured by the installer.
+                The redirect URI must match exactly:<br> <span class="highlight">http://127.0.0.1:5000/callback</span>
             </div>
         </div>
 
         <div class="step">
-            <h2><span class="number">2</span> Client ID en Secret Ophalen</h2>
+            <h2><span class="number">2</span> Get Your Client ID and Secret</h2>
             <ol>
-                <li>Na het aanmaken van je app, klik op de app naam in het dashboard</li>
-                <li>Klik op <strong>"Settings"</strong></li>
-                <li>Kopieer je <strong>Client ID</strong></li>
-                <li>Klik op <strong>"View client secret"</strong> en kopieer het</li>
-                <li>Bewaar deze veilig - je hebt ze zo nodig!</li>
+                <li>After creating your app, click its name in the dashboard</li>
+                <li>Click <strong>"Settings"</strong></li>
+                <li>Copy your <strong>Client ID</strong></li>
+                <li>Click <strong>"View client secret"</strong> and copy it</li>
+                <li>Keep these safe - you will need them shortly!</li>
             </ol>
         </div>
 
         <div class="step">
-            <h2><span class="number">3</span> .env Bestand Aanmaken</h2>
-            <p>Maak een bestand genaamd <span class="highlight">.env</span> in de hoofdmap van het project:</p>
-            <div class="code-block">SPOTIFY_CLIENT_ID=jouw_client_id_hier
-SPOTIFY_CLIENT_SECRET=jouw_client_secret_hier
-SPOTIFY_REDIRECT_URI=http://localhost:5000/callback
-FLASK_SECRET_KEY=een_random_string_hier</div>
-            <p>Vervang de waarden met je eigen credentials van stap 2.</p>
-            <p>Voor <span class="highlight">FLASK_SECRET_KEY</span> gebruik een willekeurige string (bijv. een UUID of random tekst).</p>
+            <h2><span class="number">3</span> Create the .env File</h2>
+            <p>Create a file named <span class="highlight">.env</span> in the project root:</p>
+            <div class="code-block">SPOTIFY_CLIENT_ID=your_client_id_here
+SPOTIFY_CLIENT_SECRET=your_client_secret_here
+SPOTIFY_REDIRECT_URI=http://127.0.0.1:5000/callback
+FLASK_SECRET_KEY=a_random_string_here</div>
+            <p>Replace the values with your own credentials from step 2.</p>
+            <p>For <span class="highlight">FLASK_SECRET_KEY</span>, use a long, random secret value (for example, a generated UUID).</p>
         </div>
 
         <div class="step">
-            <h2><span class="number">4</span> Server Herstarten</h2>
+            <h2><span class="number">4</span> Restart the Server</h2>
             <ol>
-                <li>Stop de Flask server (Ctrl+C in de terminal)</li>
-                <li>Start de server opnieuw: <span class="highlight">python app.py</span></li>
-                <li>Ververs deze pagina</li>
+                <li>Stop the Flask server (Ctrl+C in the terminal)</li>
+                <li>Start the server again: <span class="highlight">python app.py</span></li>
+                <li>Refresh this page</li>
             </ol>
         </div>
 
         <div class="success">
-            <strong>✅ Klaar?</strong><br>
-            Als je de .env file hebt aangemaakt met de juiste credentials, herstart dan de server en ververs deze pagina.
+            <strong>✅ Ready?</strong><br>
+            After creating the .env file with the correct credentials, restart the server and refresh this page.
             <br><br>
-            <button class="btn" onclick="location.reload()">Pagina Verversen</button>
+            <button class="btn" onclick="location.reload()">Refresh Page</button>
         </div>
 
         <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e9ecef;">
-            <h3 style="color: #667eea; margin-bottom: 10px;">Hulp nodig?</h3>
-            <p>Zie <strong>README.md</strong> voor gedetailleerde instructies en troubleshooting.</p>
+            <h3 style="color: #667eea; margin-bottom: 10px;">Need help?</h3>
+            <p>See <strong>README.md</strong> for detailed instructions and troubleshooting.</p>
         </div>
     </div>
 </body>
