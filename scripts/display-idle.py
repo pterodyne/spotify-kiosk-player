@@ -11,7 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from display_timeout import config_path, read_minutes
+from display_timeout import config_path, read_seconds
 
 
 def validate_output(output):
@@ -69,13 +69,13 @@ class Supervisor:
             return
         self.stop()
         self.version = version
-        minutes = read_minutes(self.path)
-        if minutes:
+        seconds = read_seconds(self.path)
+        if seconds:
             # swayidle executes event strings in a shell. Every token here is
             # fixed except the strictly validated compositor output name.
             self.child = subprocess.Popen([
                 'swayidle', '-C', '/dev/null', '-w', '-S', 'seat0',
-                'timeout', str(minutes * 60),
+                'timeout', str(seconds),
                 f'swaymsg output {self.output} power off', 'resume',
                 f'swaymsg output {self.output} power on'])
 

@@ -1,15 +1,29 @@
 # Hardware display idle timeout (Sway)
 
 Settings → System replaces the old **Power Saving** CPU-clock toggle with one
-**Display off after idle minutes** setting: default 5, 1–120 minutes, or 0 / Never.
+**Display off after idle** slider: Never (0 seconds), 30 sec, 1 min, 5 min
+(default), or 30 min. Changes save automatically on release/change, with a selected
+value and save status. Never disables the timer and keeps/restores display power;
+it does not turn power off.
 The old setting changed `/boot/firmware/config.txt`; it never controlled display
 power. Existing CPU clock configuration is deliberately left untouched.
 
 `display_timeout.py` registers authenticated GET/POST
-`/api/system/screen-timeout` (`{"minutes":5}`). POST additionally requires the
-actual loopback peer, trusted Host/Origin, and JSON, matching the keyboard bridge.
-Only the minutes field is accepted; clients cannot send output names, commands,
-process IDs, or signals. Preferences are atomically replaced with mode 0600 in
+`/api/system/screen-timeout`. The slider GET uses `?unit=seconds` and receives
+`{"seconds":300}`; POST sends exactly `{"seconds":30}` (allowed integer seconds:
+0, 30, 60, 300, 1800). Legacy GET without the query returns `{"minutes":5}`;
+for 30 seconds it returns `{"minutes":0.5}`, never a misleading disabled zero.
+Legacy POST of exactly `{"minutes":N}` still accepts integers 0–120.
+POST additionally requires the actual loopback peer, trusted Host/Origin, and JSON,
+matching the keyboard bridge. Mixed minutes/seconds fields and unknown fields
+are rejected; clients cannot send output names, commands, process IDs, or signals.
+Canonical writes contain only integer seconds. Existing minutes-only files are
+read without modification (`{"minutes":5}` means 300 seconds), migrating on the
+next save. Legacy non-slider values remain effective and are visibly labeled in
+the UI until explicitly changed. Canonical files accept the slider values and
+whole-minute legacy values up to 7200 seconds. Invalid types, ranges, malformed
+JSON, and mixed-format files fail safely to the 300-second default.
+Preferences are atomically replaced with mode 0600 in
 `$XDG_CONFIG_HOME/spotify-kiosk/display.json` (default `~/.config/...`, directory
 0700). API and supervisor must run as the same kiosk user with the same HOME and
 XDG_CONFIG_HOME.

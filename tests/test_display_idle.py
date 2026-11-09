@@ -69,6 +69,9 @@ def test_supervisor_refresh_disables_and_fixed_commands(tmp_path, monkeypatch):
     d.save_minutes(path, 2)
     supervisor.refresh()
     assert calls[-1][7] == '120'
+    d.save_seconds(path, 30)
+    supervisor.refresh()
+    assert calls[-1][7] == '30'
     d.save_minutes(path, 0)
     supervisor.refresh()
     assert calls[-1] == ('on', 'DPI-1')

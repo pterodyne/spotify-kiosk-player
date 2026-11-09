@@ -384,10 +384,11 @@
                             <span class="toggle-label-inline" data-i18n="settings.pinProtection">PIN Protection</span>
                         </div>
                         <div class="display-timeout-setting">
-                            <label for="screen-timeout-minutes" data-i18n="settings.screenTimeout">Display off after idle minutes (0 = Never)</label>
-                            <input id="screen-timeout-minutes" type="number" min="0" max="120" step="1" value="5" style="width:5em;min-height:44px">
-                            <button id="screen-timeout-save" type="button" data-i18n="settings.saveTimeout">Save</button>
-                            <button id="screen-timeout-never" type="button" data-i18n="settings.neverTimeout">Never</button>
+                            <label for="screen-timeout-slider">Display off after idle</label>
+                            <output id="screen-timeout-value" for="screen-timeout-slider" aria-live="polite">5 min</output>
+                            <input id="screen-timeout-slider" type="range" min="0" max="4" step="1" value="3" aria-valuetext="5 min" aria-describedby="screen-timeout-status" style="width:100%;min-height:44px;accent-color:#fff;background:#222;color:#fff">
+                            <div style="display:flex;justify-content:space-between;color:#fff;background:#222;padding:8px" aria-hidden="true"><span>Never</span><span>30 sec</span><span>1 min</span><span>5 min</span><span>30 min</span></div>
+                            <p id="screen-timeout-status" role="status">Changes save automatically. Never keeps the display on.</p>
                             <p data-i18n="settings.screenTimeoutHelp">Turns the hardware display off, not just a black overlay. Touch to wake; music continues. Touch electronics stay powered.</p>
                         </div>
                     </div>

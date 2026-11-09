@@ -3455,42 +3455,76 @@ function setupLocalDevicesToggle() {
 }
 
 // Display idle policy runs in the Sway user session, not the browser.
+const SCREEN_TIMEOUT_SECONDS = [0, 30, 60, 300, 1800];
+const SCREEN_TIMEOUT_LABELS = ['Never', '30 sec', '1 min', '5 min', '30 min'];
+// GETs and POSTs share ownership of UI state; saving invalidates older loads.
+let screenTimeoutGeneration = 0;
+let screenTimeoutSaving = false;
+
+function renderScreenTimeout(seconds) {
+    const input = document.getElementById('screen-timeout-slider');
+    const index = SCREEN_TIMEOUT_SECONDS.indexOf(seconds);
+    // Preserve legacy values without silently replacing them with a slider stop.
+    input.value = index < 0 ? 3 : index;
+    const label = index < 0 ? `${seconds / 60} min (legacy; select to change)` : SCREEN_TIMEOUT_LABELS[index];
+    input.setAttribute('aria-valuetext', label);
+    document.getElementById('screen-timeout-value').textContent = label;
+}
+
 function setupScreenTimeout() {
-    const input = document.getElementById('screen-timeout-minutes');
+    const input = document.getElementById('screen-timeout-slider');
     if (!input) return;
-    const save = async (minutes) => {
-        if (!Number.isInteger(minutes) || minutes < 0 || minutes > 120) {
-            showToast(t('error.save'), 'error'); return;
-        }
+    input.disabled = true;
+    input.addEventListener('input', () => renderScreenTimeout(SCREEN_TIMEOUT_SECONDS[Number(input.value)]));
+    input.addEventListener('change', async () => {
+        const seconds = SCREEN_TIMEOUT_SECONDS[Number(input.value)];
+        const status = document.getElementById('screen-timeout-status');
+        const generation = ++screenTimeoutGeneration;
+        screenTimeoutSaving = true;
+        input.disabled = true;
+        status.textContent = 'Saving…';
         try {
             const response = await fetch('/api/system/screen-timeout', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({minutes})
+                body: JSON.stringify({seconds})
             });
             const data = await response.json();
+            if (generation !== screenTimeoutGeneration) return;
             if (!response.ok) throw new Error(data.error || t('error.save'));
-            input.value = data.minutes;
-            input.dataset.saved = data.minutes;
+            input.dataset.saved = data.seconds;
+            renderScreenTimeout(data.seconds);
+            status.textContent = 'Saved. Never keeps the display on.';
         } catch (error) {
-            input.value = input.dataset.saved || '5';
+            if (generation !== screenTimeoutGeneration) return;
+            renderScreenTimeout(Number(input.dataset.saved || 300));
+            status.textContent = 'Not saved: ' + error.message;
             showToast(error.message, 'error');
+        } finally {
+            if (generation === screenTimeoutGeneration) {
+                screenTimeoutSaving = false;
+                input.disabled = false;
+            }
         }
-    };
-    document.getElementById('screen-timeout-save').addEventListener('click', () => save(Number(input.value)));
-    document.getElementById('screen-timeout-never').addEventListener('click', () => save(0));
+    });
 }
 
 async function loadScreenTimeout() {
-    const input = document.getElementById('screen-timeout-minutes');
-    if (!input) return;
+    const input = document.getElementById('screen-timeout-slider');
+    if (!input || screenTimeoutSaving) return;
+    const generation = ++screenTimeoutGeneration;
     try {
-        const response = await fetch('/api/system/screen-timeout');
+        const response = await fetch('/api/system/screen-timeout?unit=seconds');
         const data = await response.json();
+        if (generation !== screenTimeoutGeneration) return;
         if (!response.ok) throw new Error(data.error || t('error.save'));
-        input.value = data.minutes;
-        input.dataset.saved = data.minutes;
+        renderScreenTimeout(data.seconds);
+        input.dataset.saved = data.seconds;
     } catch (error) {
+        if (generation !== screenTimeoutGeneration) return;
+        document.getElementById('screen-timeout-status').textContent = 'Unable to load timeout: ' + error.message;
         showToast(error.message, 'error');
+    } finally {
+        if (generation === screenTimeoutGeneration) input.disabled = false;
     }
 }
 

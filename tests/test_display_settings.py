@@ -10,9 +10,9 @@ def test_display_settings_browser():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         source = (ROOT / 'static/js/app.js').read_text()
-        start = source.index('function setupScreenTimeout')
+        start = source.index('const SCREEN_TIMEOUT_SECONDS')
         end = source.index('// ============================================', start)
-        page.set_content('<input id="screen-timeout-minutes" type="number"><button id="screen-timeout-save">Save</button><button id="screen-timeout-never">Never</button>')
+        page.set_content('<input id="screen-timeout-slider" type="range" min="0" max="4"><output id="screen-timeout-value"></output><p id="screen-timeout-status"></p>')
         page.evaluate('''() => {
             window.saved = []; window.failSave = false;
             window.showToast = () => {}; window.t = x => x;
@@ -21,22 +21,20 @@ def test_display_settings_browser():
                     const body = JSON.parse(options.body); saved.push(body);
                     return {ok: !failSave, json: async () => failSave ? {error:'denied'} : body};
                 }
-                return {ok:true, json:async()=>({minutes:5})};
+                return {ok:true, json:async()=>({seconds:300})};
             };
         }''')
         page.add_script_tag(content=source[start:end])
         page.evaluate('setupScreenTimeout(); loadScreenTimeout();')
-        page.wait_for_function("document.querySelector('input').value === '5'")
-        page.fill('input', '17')
-        page.click('#screen-timeout-save')
-        assert page.evaluate('saved') == [{'minutes': 17}]
-        page.click('#screen-timeout-never')
-        assert page.evaluate('saved')[-1] == {'minutes': 0}
-        page.fill('input', '121')
-        page.click('#screen-timeout-save')
-        assert len(page.evaluate('saved')) == 2
+        page.wait_for_function("document.querySelector('input').value === '3' && !document.querySelector('input').disabled")
+        for index, seconds in [(1, 30), (0, 0)]:
+            page.locator('input').evaluate('(input, value) => {input.value=value;input.dispatchEvent(new Event("change"));}', index)
+            page.wait_for_function('!document.querySelector("input").disabled')
+            assert page.evaluate('saved')[-1] == {'seconds': seconds}
         page.evaluate('failSave = true')
-        page.fill('input', '8')
-        page.click('#screen-timeout-save')
+        page.locator('input').evaluate('(input) => {input.value=4;input.dispatchEvent(new Event("change"));}')
+        page.wait_for_function('!document.querySelector("input").disabled')
         assert page.input_value('input') == '0'
+        assert page.locator('#screen-timeout-value').inner_text() == 'Never'
+        assert 'Not saved: denied' in page.locator('#screen-timeout-status').inner_text()
         browser.close()
