@@ -2842,7 +2842,11 @@ body[data-theme="dark"] .pin-key:hover {
         border-radius: 12px; background: var(--panel-bg); color: var(--text-primary);
         font: 600 20px 'Quicksand', sans-serif;
     }
-    .library-tracks-toggle button[aria-pressed="true"] { background: var(--accent-color); }
+    .library-tracks-toggle button[aria-pressed="true"] {
+        background: #173b2b;
+        color: #ffffff;
+        border-color: currentColor;
+    }
     .library-tracks-toggle button:focus-visible { outline: 3px solid var(--text-primary); outline-offset: 2px; }
     .panel-left, .panel-middle { grid-column: 1; grid-row: 2; }
     .panel-middle { display: none; }

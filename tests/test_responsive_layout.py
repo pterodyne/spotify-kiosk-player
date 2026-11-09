@@ -127,6 +127,26 @@ def test_settings_fits_viewport_with_scrollable_long_content(page, height):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
 
+@pytest.mark.parametrize('theme', ['light', 'dark'])
+def test_navigation_text_contrast(page, theme):
+    page.evaluate('(theme) => document.body.dataset.theme = theme', theme)
+    for selected in ['Library', 'Tracks']:
+        page.get_by_role('button', name=selected, exact=True).click()
+        for name in ['Library', 'Tracks']:
+            contrast = page.get_by_role('button', name=name, exact=True).evaluate('''el => {
+                const style = getComputedStyle(el);
+                const luminance = color => {
+                    const rgb = color.match(/[\\d.]+/g).slice(0, 3).map(Number).map(v => {
+                        v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4;
+                    });
+                    return rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+                };
+                const a = luminance(style.color), b = luminance(style.backgroundColor);
+                return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+            }''')
+            assert contrast >= 4.5, (theme, name, contrast)
+
+
 @pytest.mark.parametrize('width', [901, 1280])
 def test_wide_screen_keeps_original_three_panes_even_after_resize(page, width):
     page.get_by_role('button', name='Tracks', exact=True).click()
