@@ -2,7 +2,8 @@
 
 ## Scope and findings (Pi inspection, 2026-11-09)
 
-This is a staged installer, **not deployed or reboot-tested**. No partition resizing,
+The installer stages configuration only; the target has since booted successfully
+with overlayroot (see the postboot compatibility findings below). No partition resizing,
 formatting, mounts, service stops, package installation or reboot is performed by
 `setup-readonly-root.py`. The default invocation prints a plan without writing.
 
@@ -175,6 +176,77 @@ physical console/SD reader available before activation.
    Restore services only after all four binds succeed. Reboot only after the
    operator separately authorizes it. There is deliberately no reboot command
    in this installer or runbook.
+
+## Overlayroot postboot remount compatibility
+
+Read-only inspection of `novaplayer` at `192.168.100.90` after activation
+confirmed `/` is a writable overlay, `/media/root-ro` is the read-only SD ext4
+lower, `/media/root-rw` is tmpfs, and firmware is read-only. Boot succeeded,
+but `systemd-remount-fs.service` failed with
+`overlay: No changes allowed in reconfigure`. The generated runtime fstab
+replays lower/upper/work directories with trailing slashes whereas the active
+mount reports paths without them. Do not rewrite the generated fstab or try
+extra remount options: the initramfs already established the intended root.
+
+The installer now generates and backs up (including an absent-file manifest
+entry) `/etc/systemd/system/systemd-remount-fs.service.d/kiosk-overlayroot.conf`:
+
+```ini
+[Unit]
+ConditionPathIsMountPoint=!/media/root-ro
+```
+
+This is a **unit start condition**, not a shell command or ExecCondition.
+When the lower mount exists systemd skips the service, including ExecStart,
+without marking that skipped start failed. In non-overlay maintenance the path
+is not a mountpoint (even if its directory remains), so the unchanged vendor
+ExecStart runs normally. Do not mask the service or clear its ExecStart.
+The service handles only `/`, separate `/usr` and configured kernel API mounts;
+normal firmware/USB/bind mounts are handled separately. This target has no
+separate `/usr`, and its only API fstab entry is `proc /proc proc defaults`,
+already mounted by systemd. No additional remount is required here. Reassess
+this exception if adding separate `/usr` or custom API filesystem options.
+
+For an already-overlaid system, first separately authorize and test this same
+drop-in in volatile `/etc`, reload systemd, reset the old failed state, and start
+only `systemd-remount-fs.service`. Expect a condition skip (`ConditionResult=no`)
+and no new remount invocation; inactive/skipped is expected, not active.
+Do not use `mount -a` or restart unrelated services.
+
+After that validation, the following **operator-only command is not run by the
+installer**. It persists only the drop-in using the package's inspected helper,
+which temporarily remounts the lower filesystem writable and cleans up afterward.
+It refuses to overwrite an existing lower drop-in; preserve/review one first.
+No reboot or initramfs rebuild is needed for this systemd-only change:
+
+```sh
+sudo overlayroot-chroot /bin/sh -eu -c '
+  d=/etc/systemd/system/systemd-remount-fs.service.d
+  f=$d/kiosk-overlayroot.conf
+  test ! -e "$f" && test ! -L "$f"
+  install -d -o root -g root -m 0755 "$d"
+  umask 022
+  printf "%s\n" "[Unit]" "ConditionPathIsMountPoint=!/media/root-ro" > "$f"
+  chown root:root "$f"
+  chmod 0644 "$f"
+'
+# Required even when the helper reports success: it only logs remount-ro errors.
+findmnt --mountpoint /media/root-ro -o TARGET,SOURCE,FSTYPE,OPTIONS
+sudo cat /media/root-ro/etc/systemd/system/systemd-remount-fs.service.d/kiosk-overlayroot.conf
+```
+
+**Stop if `/media/root-ro` did not return to `ro`; do not claim protection or
+reboot.** Check for leftover helper mounts and investigate with the operator.
+The live upper `/etc` copy remains independent; ensure both copies match, then
+`sudo systemctl daemon-reload`,
+`sudo systemctl reset-failed systemd-remount-fs.service`, and
+`sudo systemctl start systemd-remount-fs.service`.
+Read back `systemctl cat systemd-remount-fs.service`,
+`systemctl show systemd-remount-fs.service -p ActiveState -p Result -p ConditionResult`
+and its new journal entries. A live condition test is not a new boot test.
+
+References: [systemd-remount-fs.service](https://www.freedesktop.org/software/systemd/man/latest/systemd-remount-fs.service.html)
+and [systemd.unit conditions](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html#Conditions%20and%20Asserts).
 
 ## Keep high-volume caches in RAM
 

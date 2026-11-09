@@ -25,6 +25,43 @@ class ReadonlySetupTests(unittest.TestCase):
             self.assertNotIn('nofail', result.stdout)
             self.assertEqual((root / 'etc/fstab').read_text(), before)
 
+    def test_overlay_remount_condition_and_backup_manifest(self):
+        import importlib.util
+        import json
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location('readonly_remount', SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        name = 'etc/systemd/system/systemd-remount-fs.service.d/kiosk-overlayroot.conf'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / 'etc').mkdir()
+            (root / 'etc/fstab').write_text('PARTUUID=sd /boot/firmware vfat defaults 0 2\n')
+            (root / 'boot/firmware').mkdir(parents=True)
+            (root / 'boot/firmware/cmdline.txt').write_text('quiet splash\n')
+            files = module.plan(root, UUID)
+            self.assertEqual(files.get(name), '[Unit]\nConditionPathIsMountPoint=!/media/root-ro\n')
+            # Real systemd evaluates the generated negated condition: a mounted
+            # path skips start, an ordinary maintenance directory allows start.
+            for path, passes in (('/', False), (tmp, True)):
+                result = subprocess.run(['systemd-analyze', 'condition',
+                    files[name].splitlines()[1].replace('/media/root-ro', path)],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, passes, result.stderr)
+            real_path = pathlib.Path
+            def redirected_path(value):
+                return root / 'backups' if value == '/root/kiosk-readonly-backups' else real_path(value)
+            with patch.object(module, 'preflight'), patch.object(module, 'Path', side_effect=redirected_path), patch('sys.argv', [str(SCRIPT), '--root', tmp, '--apply']):
+                module.main()
+            backup = next((root / 'backups').iterdir())
+            manifest = json.loads((backup / 'manifest.json').read_text())
+            self.assertIn({'path': name, 'existed': False}, manifest)
+            self.assertEqual((root / name).read_text(), files[name])
+            # No Service/ExecStart override: when the condition passes the
+            # vendor remount command and all its existing behavior are retained.
+            self.assertNotIn('[Service]', files[name])
+
     def test_rejects_old_exfat_uuid(self):
         result = subprocess.run(['python3', str(SCRIPT), '--uuid', '6AEE-24D4'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)

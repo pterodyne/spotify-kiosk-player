@@ -50,6 +50,9 @@ def plan(root, uuid):
         result[f'etc/systemd/system/{service}.service.d/kiosk-persistence.conf'] = '[Unit]\nRequiresMountsFor=' + ' '.join(paths) + '\n'
     for service in ('user@1000', 'display-manager'):
         result[f'etc/systemd/system/{service}.service.d/kiosk-persistence.conf'] = '[Unit]\nRequiresMountsFor=/home/pterodyne\n'
+    # overlayroot already mounted /; replaying its generated overlay options
+    # fails reconfigure. Keep the vendor remount in non-overlay maintenance.
+    result['etc/systemd/system/systemd-remount-fs.service.d/kiosk-overlayroot.conf'] = '[Unit]\nConditionPathIsMountPoint=!/media/root-ro\n'
     return result
 
 
