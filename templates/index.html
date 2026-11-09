@@ -383,12 +383,12 @@
                             </label>
                             <span class="toggle-label-inline" data-i18n="settings.pinProtection">PIN Protection</span>
                         </div>
-                        <div class="toggle-switch-container">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="power-saving-toggle">
-                                <span class="toggle-slider"></span>
-                            </label>
-                            <span class="toggle-label-inline" data-i18n="settings.powerSaving">Power Saving</span>
+                        <div class="display-timeout-setting">
+                            <label for="screen-timeout-minutes" data-i18n="settings.screenTimeout">Display off after idle minutes (0 = Never)</label>
+                            <input id="screen-timeout-minutes" type="number" min="0" max="120" step="1" value="5" style="width:5em;min-height:44px">
+                            <button id="screen-timeout-save" type="button" data-i18n="settings.saveTimeout">Save</button>
+                            <button id="screen-timeout-never" type="button" data-i18n="settings.neverTimeout">Never</button>
+                            <p data-i18n="settings.screenTimeoutHelp">Turns the hardware display off, not just a black overlay. Touch to wake; music continues. Touch electronics stay powered.</p>
                         </div>
                     </div>
                     <hr class="other-divider">

@@ -498,7 +498,7 @@ install_packages() {
     # Kiosk packages (only for Lite)
     if [[ "$OS_VARIANT" == "lite" ]]; then
         print_info "Installing GUI packages for kiosk mode..."
-        if ! sudo apt install -y -qq sway wlr-randr chromium lightdm; then
+        if ! sudo apt install -y -qq sway swayidle wlr-randr chromium lightdm; then
             print_error "GUI package installation failed."
             exit 1
         fi
@@ -838,6 +838,9 @@ seat * hide_cursor 1
 # Disable all borders
 default_border none
 default_floating_border none
+
+# User-session hardware display timeout (default 5 minutes; touch resumes)
+exec python3 ${INSTALL_DIR}/scripts/display-idle.py
 
 # Start Chromium borderless; allow the compositor to reserve keyboard space
 exec ${INSTALL_DIR}/scripts/launch-player.sh --ozone-platform=wayland --noerrdialogs --disable-infobars

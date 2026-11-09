@@ -740,8 +740,8 @@ function setupEventListeners() {
     // Local devices toggle setup
     setupLocalDevicesToggle();
 
-    // Power saving toggle setup
-    setupPowerSavingToggle();
+    // Hardware display timeout setup
+    setupScreenTimeout();
 
     // View toggle (Playlists / Artists) event listeners
     document.querySelectorAll('.view-toggle-btn').forEach(btn => {
@@ -1874,10 +1874,10 @@ function switchTab(tabName) {
         loadDefaultVolumeSetting();
     }
 
-    // Load network status and power saving status when switching to system tab
+    // Load network status and display timeout when switching to system tab
     if (tabName === 'system') {
         loadNetworkStatus();
-        loadPowerSavingStatus();
+        loadScreenTimeout();
     }
 
     // Load account info when switching to account tab
@@ -3454,50 +3454,43 @@ function setupLocalDevicesToggle() {
     }
 }
 
-// Setup power saving toggle
-function setupPowerSavingToggle() {
-    const powerSavingToggle = document.getElementById('power-saving-toggle');
-
-    if (powerSavingToggle) {
-        powerSavingToggle.addEventListener('change', async () => {
-            try {
-                const response = await fetch('/api/system/power-saving', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: powerSavingToggle.checked })
-                });
-
-                const data = await response.json();
-
-                if (data.error) {
-                    showToast(data.error, 'error');
-                    // Revert toggle
-                    powerSavingToggle.checked = !powerSavingToggle.checked;
-                } else if (data.reboot_required) {
-                    showToast(t('settings.rebootRequired'), 'info');
-                }
-            } catch (error) {
-                console.error('Error setting power saving:', error);
-                showToast(t('error.save'), 'error');
-                // Revert toggle
-                powerSavingToggle.checked = !powerSavingToggle.checked;
-            }
-        });
-    }
+// Display idle policy runs in the Sway user session, not the browser.
+function setupScreenTimeout() {
+    const input = document.getElementById('screen-timeout-minutes');
+    if (!input) return;
+    const save = async (minutes) => {
+        if (!Number.isInteger(minutes) || minutes < 0 || minutes > 120) {
+            showToast(t('error.save'), 'error'); return;
+        }
+        try {
+            const response = await fetch('/api/system/screen-timeout', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({minutes})
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || t('error.save'));
+            input.value = data.minutes;
+            input.dataset.saved = data.minutes;
+        } catch (error) {
+            input.value = input.dataset.saved || '5';
+            showToast(error.message, 'error');
+        }
+    };
+    document.getElementById('screen-timeout-save').addEventListener('click', () => save(Number(input.value)));
+    document.getElementById('screen-timeout-never').addEventListener('click', () => save(0));
 }
 
-// Load power saving status from backend
-async function loadPowerSavingStatus() {
-    const powerSavingToggle = document.getElementById('power-saving-toggle');
-
-    if (powerSavingToggle) {
-        try {
-            const response = await fetch('/api/system/power-saving');
-            const data = await response.json();
-            powerSavingToggle.checked = data.enabled || false;
-        } catch (error) {
-            console.error('Error loading power saving status:', error);
-        }
+async function loadScreenTimeout() {
+    const input = document.getElementById('screen-timeout-minutes');
+    if (!input) return;
+    try {
+        const response = await fetch('/api/system/screen-timeout');
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || t('error.save'));
+        input.value = data.minutes;
+        input.dataset.saved = data.minutes;
+    } catch (error) {
+        showToast(error.message, 'error');
     }
 }
 

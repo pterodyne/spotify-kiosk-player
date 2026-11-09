@@ -52,6 +52,8 @@ def device_name_allowed(device):
 app = Flask(__name__)
 app.secret_key = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 register_keyboard_routes(app)
+from display_timeout import register_display_routes
+register_display_routes(app)
 
 # API error cooldown - voorkomt escalatie bij tijdelijke Spotify problemen
 _last_api_error_time = 0
@@ -2770,47 +2772,6 @@ def system_update():
         return jsonify({'error': 'Update timeout - probeer opnieuw'}), 500
     except Exception as e:
         print(f"[Update] Error: {e}")
-        return jsonify({'error': str(e)}), 500
-
-
-@app.route('/api/system/power-saving', methods=['GET'])
-def get_power_saving():
-    """Check if power saving is enabled (arm_freq=1800)"""
-    try:
-        with open('/boot/firmware/config.txt', 'r') as f:
-            content = f.read()
-            enabled = 'arm_freq=1800' in content
-        return jsonify({'enabled': enabled})
-    except:
-        return jsonify({'enabled': False, 'error': 'Cannot read config'})
-
-
-@app.route('/api/system/power-saving', methods=['POST'])
-def set_power_saving():
-    """Enable/disable power saving (requires reboot)"""
-    data = request.get_json() or {}
-    enable = data.get('enabled', True)
-
-    try:
-        if enable:
-            # Add arm_freq=1800 if not present
-            result = subprocess.run(
-                ['sudo', 'bash', '-c',
-                 'grep -q "^arm_freq=" /boot/firmware/config.txt || echo "arm_freq=1800" >> /boot/firmware/config.txt'],
-                capture_output=True, text=True, timeout=10
-            )
-        else:
-            # Remove arm_freq line
-            result = subprocess.run(
-                ['sudo', 'sed', '-i', '/^arm_freq=/d', '/boot/firmware/config.txt'],
-                capture_output=True, text=True, timeout=10
-            )
-
-        if result.returncode != 0:
-            return jsonify({'error': result.stderr or 'Command failed'}), 500
-
-        return jsonify({'success': True, 'reboot_required': True})
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 

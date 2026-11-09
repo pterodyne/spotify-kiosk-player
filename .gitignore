@@ -6,6 +6,7 @@
 !README.md
 !RASPBERRY_PI_SETUP.md
 !docs/linux-boot-splash.md
+!docs/display-timeout.md
 
 # Claude local settings
 .claude/
